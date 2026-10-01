@@ -16,12 +16,18 @@ app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 // Static files (Web Dashboard)
 app.use(express.static(path.join(__dirname, "public")));
 
+const webhookController = require("./src/controllers/webhookController");
+
+// Direct Root-level Webhook endpoints for Meta (https://domain/webhook)
+app.get("/webhook", webhookController.handleVerification);
+app.post("/webhook", webhookController.handleIncomingEvent);
+
 // API routes
 app.use("/api", apiRoutes);
 
 // Fallback for SPA
 app.get("*", (req, res) => {
-  if (!req.path.startsWith("/api")) {
+  if (!req.path.startsWith("/api") && !req.path.startsWith("/webhook")) {
     res.sendFile(path.join(__dirname, "public", "index.html"));
   } else {
     res.status(404).json({ success: false, message: "API endpoint not found" });

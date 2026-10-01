@@ -48,6 +48,25 @@ A standalone, enterprise-grade WhatsApp Bulk Broadcast application powered by th
   - Real-time Server-Sent Events (SSE) stream for live progress bars, speed counters (messages/sec), and activity feed.
   - Interactive controls: **Pause**, **Resume**, and **Cancel/Stop** active broadcasts.
 
+- **Meta Webhooks & Live Customer Replies**:
+  - **Meta Verification Handshake**: Automatic support for Meta's `GET /webhook` and `GET /api/webhook` handshake protocol (`hub.mode`, `hub.challenge`, `hub.verify_token`).
+  - **Verify Token Management**:
+    - Generates cryptographically secure verify tokens (`wb_verify_...`) with 1-click from the dashboard.
+    - Synchronized across SQLite `settings` and `.env`.
+    - 1-click **"📋 Copy Token"** and **"📋 Copy Webhook URL"** buttons.
+  - **Incoming Message Processing (`POST /webhook`)**:
+    - Automatically parses customer replies: text messages, quick reply button clicks, interactive list selections, reactions, images, audio, documents, and locations.
+    - Matches sender phone numbers to active contacts and broadcast campaigns in SQLite (`customer_replies` table).
+    - Captures customer WhatsApp profile names and message timestamps.
+  - **Customer Replies Inbox**:
+    - Dedicated **"💬 Customer Replies"** dashboard tab with real-time unread counter badge.
+    - Real-time Server-Sent Events (SSE) push alerts when a customer replies.
+    - Filter by Unread / All, with instant search by phone, customer name, or message text.
+    - 1-click **"💬 Chat on WhatsApp"** button (`https://wa.me/{phone}`) to reply directly to the customer on WhatsApp.
+    - Built-in **"🧪 Simulate Test"** modal for testing inbound replies locally without external tunnels.
+  - **Real-Time Delivery Receipts**:
+    - Automatically updates recipient delivery statuses (`DELIVERED`, `READ`, `FAILED`) when Meta pushes delivery receipts.
+
 - **Reports & History**:
   - SQLite persistent storage for all historical broadcast campaigns.
   - Scheduled campaigns marked with purple `SCHEDULED` status badge and live countdown timer.
@@ -100,31 +119,63 @@ Open your browser at:
 
 ```
 whatsapp_bulk/
-├── .env                  # Project configuration
+├── .env                  # Project configuration & verify token
 ├── .env.example          # Sample environment file
 ├── package.json          # Node.js dependencies
-├── server.js             # Express application entrypoint
+├── server.js             # Express application entrypoint (/webhook mounted)
 ├── data/
 │   └── whatsapp_bulk.db  # Embedded SQLite database (Self-contained)
 ├── public/               # Modern Glassmorphic Web Dashboard
-│   ├── index.html        # Single Page Application
+│   ├── index.html        # Single Page Application (New Broadcast, History, Customer Replies)
 │   ├── css/
-│   │   └── style.css     # Dark mode, responsive design system
+│   │   └── style.css     # Dark mode, responsive design system & reply cards
 │   └── js/
-│       └── app.js        # Reactive client logic & SSE streaming
+│       └── app.js        # Reactive client logic, SSE streaming & webhook modal
 └── src/
     ├── config/
     │   ├── env.js        # Environment loader
-    │   └── database.js   # SQLite connection & schema migrations
+    │   └── database.js   # SQLite connection & customer_replies table
     ├── controllers/
     │   ├── uploadController.js     # File upload & parsing
     │   ├── broadcastController.js  # Campaign lifecycle & test dispatch
     │   ├── campaignController.js   # Reports & history
-    │   └── settingsController.js   # Meta credentials & diagnostics
+    │   ├── settingsController.js   # Meta credentials & diagnostics
+    │   ├── templateController.js   # System templates CRUD & verification
+    │   └── webhookController.js    # Meta webhook handshake & reply handlers
     ├── routes/
     │   └── apiRoutes.js  # REST & SSE endpoints
     └── services/
         ├── excelService.js         # Excel/CSV parser & generator
         ├── metaWhatsAppService.js  # Meta Graph API client
-        └── broadcastEngine.js      # Throttled queue runner
+        ├── broadcastEngine.js      # Throttled queue runner & SSE emitter
+        ├── schedulerService.js     # Background cron scheduler
+        └── webhookService.js       # Meta verification & inbound parser
 ```
+
+---
+
+## ⚡ Meta Webhook Setup Guide (Step-by-Step)
+
+To receive real-time WhatsApp replies from your customers:
+
+1. **Get Your Callback URL and Verify Token**:
+   - In the dashboard, click **⚡ Webhook & Token** in the top navigation or under **Customer Replies**.
+   - Copy the **Callback URL** (e.g. `https://your-domain.com/webhook` or `https://your-domain.com/api/webhook`).
+   - Click **🔄 Generate New Token** or copy the existing **Verify Token**.
+
+2. **Configure in Meta App Dashboard**:
+   - Go to [Meta for Developers](https://developers.facebook.com/apps) > Your App > **WhatsApp** > **Configuration**.
+   - Under **Webhook**, click **Edit**.
+   - Paste your **Callback URL** and **Verify Token**.
+   - Click **Verify and Save**. Meta will execute the handshake and mark it verified!
+
+3. **Subscribe to Messages**:
+   - Under **Webhook fields**, click **Manage**.
+   - Click **Subscribe** on the **`messages`** row.
+
+> **Localhost Testing Note**:  
+> Meta requires an **HTTPS** URL. For local testing, start a tunnel using:  
+> `ngrok http 5000`  
+> Copy the generated HTTPS domain (e.g. `https://xxxx.ngrok-free.app/webhook`) into Meta!  
+> You can also click **🧪 Simulate Test** in the dashboard to test inbound customer replies immediately without any tunnel.
+

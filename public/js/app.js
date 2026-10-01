@@ -78,6 +78,8 @@ document.querySelectorAll(".nav-tab").forEach(tab => {
 
     if (targetId === "tab-campaigns") {
       loadCampaignsList();
+    } else if (targetId === "tab-replies") {
+      loadCustomerReplies();
     }
   });
 });
@@ -1497,6 +1499,17 @@ function initSSE() {
         handleProgressEvent(data);
       } else if (data.type === "status") {
         handleStatusEvent(data);
+      } else if (data.type === "reply") {
+        handleIncomingReplySSE(data.data);
+      } else if (data.type === "webhook_status") {
+        // Delivery status update received
+        if (typeof loadCampaignsList === "function") {
+          // silently refresh campaign stats if on campaigns tab
+          const activeTab = document.querySelector(".nav-tab.active");
+          if (activeTab && activeTab.getAttribute("data-tab") === "tab-campaigns") {
+            loadCampaignsList();
+          }
+        }
       }
     } catch (e) {
       // heartbeats or non-JSON
@@ -1996,7 +2009,443 @@ metaStatusPill.addEventListener("click", () => {
   btnOpenSettings.click();
 });
 
-// Run initial Meta check & load system templates on page load
+// =========================================================================
+// CUSTOMER REPLIES & META WEBHOOK MANAGEMENT
+// =========================================================================
+
+let customerReplies = [];
+let webhookConfig = null;
+let repliesSearchDebounceTimer = null;
+
+// Load Webhook Configuration (Callback URL, Verify Token, Stats)
+async function loadWebhookConfig() {
+  try {
+    const res = await fetch("/api/webhook/config");
+    const result = await res.json();
+    if (!result.success) return;
+
+    webhookConfig = result.data;
+
+    // Update modal inputs
+    const modalUrl = document.getElementById("modalWebhookUrl");
+    const modalToken = document.getElementById("modalVerifyToken");
+    const metricToken = document.getElementById("metricVerifyTokenDisplay");
+
+    if (modalUrl) modalUrl.value = webhookConfig.webhookUrl;
+    if (modalToken) modalToken.value = webhookConfig.verifyToken;
+    if (metricToken) metricToken.textContent = webhookConfig.verifyToken || "Not Set";
+
+    // Update counts
+    updateRepliesMetrics(webhookConfig.totalReplies, webhookConfig.unreadReplies, webhookConfig.distinctContacts);
+  } catch (err) {
+    console.warn("Could not load webhook config:", err.message);
+  }
+}
+
+// Update replies stats chips and badge
+function updateRepliesMetrics(total = 0, unread = 0, distinct = 0) {
+  const elTotal = document.getElementById("metricTotalReplies");
+  const elUnread = document.getElementById("metricUnreadReplies");
+  const elDistinct = document.getElementById("metricDistinctContacts");
+  const badge = document.getElementById("navRepliesBadge");
+
+  if (elTotal) elTotal.textContent = String(total);
+  if (elUnread) elUnread.textContent = String(unread);
+  if (elDistinct) elDistinct.textContent = String(distinct);
+
+  if (badge) {
+    if (unread > 0) {
+      badge.textContent = String(unread);
+      badge.style.display = "inline-flex";
+    } else {
+      badge.style.display = "none";
+    }
+  }
+}
+
+// Load Customer Replies from Backend
+async function loadCustomerReplies() {
+  const container = document.getElementById("repliesStreamContainer");
+  if (!container) return;
+
+  const search = document.getElementById("repliesSearchInput")?.value || "";
+  const filter = document.getElementById("repliesFilterStatus")?.value || "all";
+  const unreadOnly = filter === "unread";
+
+  try {
+    const queryParams = new URLSearchParams();
+    if (search.trim()) queryParams.set("search", search.trim());
+    if (unreadOnly) queryParams.set("unreadOnly", "true");
+    queryParams.set("limit", "100");
+
+    const res = await fetch(`/api/replies?${queryParams.toString()}`);
+    const result = await res.json();
+
+    if (!result.success) {
+      throw new Error(result.message || "Failed to load replies");
+    }
+
+    customerReplies = result.data || [];
+    const pagination = result.pagination || {};
+
+    updateRepliesMetrics(pagination.total, pagination.unreadCount, pagination.distinctContacts);
+    renderRepliesList(customerReplies);
+  } catch (err) {
+    console.error("Error loading customer replies:", err);
+    container.innerHTML = `
+      <div style="text-align: center; color: var(--status-danger); padding: 2.5rem;">
+        Failed to load replies: ${err.message}
+      </div>
+    `;
+  }
+}
+
+// Render Replies List Cards
+function renderRepliesList(replies) {
+  const container = document.getElementById("repliesStreamContainer");
+  if (!container) return;
+
+  if (!replies || replies.length === 0) {
+    container.innerHTML = `
+      <div style="text-align: center; padding: 3.5rem 1.5rem; background: rgba(255,255,255,0.02); border: 1px dashed var(--border-glass); border-radius: var(--radius-md);">
+        <div style="font-size: 2.5rem; margin-bottom: 0.75rem;">💬</div>
+        <h4 style="font-size: 1.05rem; color: #fff; margin-bottom: 0.4rem;">No Customer Replies Yet</h4>
+        <p style="font-size: 0.82rem; color: var(--text-muted); max-width: 440px; margin: 0 auto 1.25rem;">
+          When customers reply to your WhatsApp broadcasts or send messages, their incoming replies will automatically appear here in real time.
+        </p>
+        <button class="btn btn-secondary btn-sm" onclick="document.getElementById('btnSimulateReply')?.click()">
+          🧪 Simulate a Test Reply
+        </button>
+      </div>
+    `;
+    return;
+  }
+
+  container.innerHTML = "";
+
+  replies.forEach(reply => {
+    const card = document.createElement("div");
+    card.className = `reply-card ${reply.is_read ? "" : "unread"}`;
+    card.id = `reply-card-${reply.id}`;
+
+    // Clean phone for wa.me link
+    const cleanPhone = String(reply.from_phone || "").replace(/\D/g, "");
+    const initials = (reply.customer_name || "Customer")
+      .split(" ")
+      .map(w => w[0])
+      .slice(0, 2)
+      .join("")
+      .toUpperCase();
+
+    // Format timestamp
+    const dateObj = new Date(reply.received_at);
+    const dateFormatted = !isNaN(dateObj.getTime())
+      ? dateObj.toLocaleString(undefined, {
+          month: "short",
+          day: "numeric",
+          hour: "2-digit",
+          minute: "2-digit"
+        })
+      : reply.received_at;
+
+    // Type badge if not plain text
+    let typeBadge = "";
+    if (reply.message_type && reply.message_type !== "text") {
+      typeBadge = `<span style="font-size: 0.68rem; text-transform: uppercase; background: rgba(6, 182, 212, 0.15); color: #38bdf8; border: 1px solid rgba(6, 182, 212, 0.3); border-radius: 4px; padding: 0.1rem 0.4rem;">${reply.message_type}</span>`;
+    }
+
+    // Campaign tag if matched
+    let campaignTag = "";
+    if (reply.campaign_name) {
+      campaignTag = `<span class="reply-campaign-badge" title="Associated Broadcast Campaign">🏷 ${escapeHtml(reply.campaign_name)}</span>`;
+    }
+
+    card.innerHTML = `
+      <div class="reply-avatar">${initials}</div>
+      <div class="reply-main">
+        <div class="reply-header-row">
+          <span class="reply-customer-name">${escapeHtml(reply.customer_name || "Customer")}</span>
+          <span class="reply-phone">+${reply.from_phone}</span>
+          ${campaignTag}
+          ${typeBadge}
+        </div>
+        <div class="reply-bubble">${escapeHtml(reply.message_body || "")}</div>
+        <div class="reply-footer-row">
+          <span class="reply-timestamp">
+            <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <circle cx="12" cy="12" r="10"></circle>
+              <polyline points="12 6 12 12 14 14"></polyline>
+            </svg>
+            ${dateFormatted}
+            ${reply.is_read ? '<span style="color:#64748b; margin-left:6px;">• Read</span>' : '<span style="color:#3b82f6; font-weight:600; margin-left:6px;">• New</span>'}
+          </span>
+          <div class="reply-actions-row">
+            <a href="https://wa.me/${cleanPhone}" target="_blank" class="btn-whatsapp-chat" title="Open direct WhatsApp chat with this customer">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12.04 2c-5.46 0-9.91 4.45-9.91 9.91 0 1.75.46 3.45 1.32 4.95L2.05 22l5.25-1.38c1.45.79 3.08 1.21 4.74 1.21 5.46 0 9.91-4.45 9.91-9.91 0-2.65-1.03-5.14-2.9-7.01A9.816 9.816 0 0 0 12.04 2zm.01 1.67c2.2 0 4.26.86 5.82 2.42a8.204 8.204 0 0 1 2.41 5.82c0 4.54-3.7 8.24-8.24 8.24-1.42 0-2.82-.37-4.06-1.07l-.29-.17-3.02.79.81-2.94-.19-.3a8.196 8.196 0 0 1-1.25-4.37c0-4.54 3.7-8.24 8.24-8.24zm4.78 11.66c-.2-.1-.1.19-.38-.05-.28-.24-1.63-.8-1.88-.9-.25-.09-.43-.14-.61.14-.18.28-.71.9-.87 1.08-.16.19-.32.21-.6.07-.28-.14-1.18-.44-2.25-1.39-.83-.74-1.39-1.66-1.55-1.94-.16-.28-.02-.43.12-.57.13-.13.28-.32.42-.48.14-.16.19-.28.28-.46.09-.19.05-.35-.02-.49-.07-.14-.61-1.47-.84-2.02-.22-.53-.45-.46-.61-.47h-.52c-.18 0-.48.07-.73.35-.25.28-.96.94-.96 2.3s.98 2.67 1.12 2.86c.14.19 1.93 2.95 4.68 4.14.65.28 1.16.45 1.56.58.66.21 1.26.18 1.73.11.53-.08 1.63-.67 1.86-1.31.23-.65.23-1.2.16-1.31-.07-.12-.25-.19-.53-.29z"/>
+              </svg>
+              Chat on WhatsApp
+            </a>
+            ${
+              !reply.is_read
+                ? `<button class="btn btn-secondary btn-sm" onclick="markReplyRead(${reply.id})" style="padding: 0.25rem 0.6rem; font-size: 0.72rem;">✓ Mark Read</button>`
+                : ""
+            }
+            <button class="btn btn-secondary btn-sm" onclick="deleteCustomerReply(${reply.id})" style="padding: 0.25rem 0.5rem; font-size: 0.72rem; color: #ef4444;" title="Delete reply">✕</button>
+          </div>
+        </div>
+      </div>
+    `;
+
+    container.appendChild(card);
+  });
+}
+
+// Mark single reply read
+window.markReplyRead = async function(id) {
+  try {
+    const res = await fetch(`/api/replies/${id}/mark-read`, { method: "POST" });
+    const data = await res.json();
+    if (data.success) {
+      const card = document.getElementById(`reply-card-${id}`);
+      if (card) {
+        card.classList.remove("unread");
+      }
+      loadCustomerReplies();
+    }
+  } catch (err) {
+    showToast(err.message, "error");
+  }
+};
+
+// Delete single reply
+window.deleteCustomerReply = async function(id) {
+  if (!confirm("Are you sure you want to delete this reply record?")) return;
+  try {
+    const res = await fetch(`/api/replies/${id}`, { method: "DELETE" });
+    const data = await res.json();
+    if (data.success) {
+      showToast("Reply deleted.", "success");
+      loadCustomerReplies();
+    }
+  } catch (err) {
+    showToast(err.message, "error");
+  }
+};
+
+// Mark all as read
+async function markAllRepliesRead() {
+  try {
+    const res = await fetch("/api/replies/mark-all-read", { method: "POST" });
+    const data = await res.json();
+    if (data.success) {
+      showToast("All replies marked as read.", "success");
+      loadCustomerReplies();
+    }
+  } catch (err) {
+    showToast(err.message, "error");
+  }
+}
+
+// Handle real-time incoming reply via SSE
+function handleIncomingReplySSE(reply) {
+  if (!reply) return;
+  showToast(`💬 New WhatsApp reply from ${reply.customer_name || reply.from_phone}: "${reply.message_body || ''}"`, "success");
+  loadCustomerReplies();
+}
+
+// Utility HTML escape
+function escapeHtml(text) {
+  if (!text) return "";
+  return String(text)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+// Webhook Modal bindings
+const btnHeaderWebhook = document.getElementById("btnHeaderWebhook");
+const btnOpenWebhookModal = document.getElementById("btnOpenWebhookModal");
+const webhookModal = document.getElementById("webhookModal");
+const btnCloseWebhookModal = document.getElementById("btnCloseWebhookModal");
+const btnCloseWebhookModalBtn = document.getElementById("btnCloseWebhookModalBtn");
+
+function openWebhookModal() {
+  if (webhookModal) {
+    webhookModal.classList.add("active");
+    webhookModal.style.display = "flex";
+    loadWebhookConfig();
+  }
+}
+
+function closeWebhookModal() {
+  if (webhookModal) {
+    webhookModal.classList.remove("active");
+    webhookModal.style.display = "none";
+  }
+}
+
+if (btnHeaderWebhook) btnHeaderWebhook.addEventListener("click", openWebhookModal);
+if (btnOpenWebhookModal) btnOpenWebhookModal.addEventListener("click", openWebhookModal);
+if (btnCloseWebhookModal) btnCloseWebhookModal.addEventListener("click", closeWebhookModal);
+if (btnCloseWebhookModalBtn) btnCloseWebhookModalBtn.addEventListener("click", closeWebhookModal);
+
+// Copy Webhook URL
+document.getElementById("btnCopyWebhookUrl")?.addEventListener("click", () => {
+  const urlInput = document.getElementById("modalWebhookUrl");
+  if (urlInput) {
+    navigator.clipboard.writeText(urlInput.value).then(() => {
+      showToast("Webhook URL copied to clipboard!", "success");
+    }).catch(() => {
+      urlInput.select();
+      document.execCommand("copy");
+      showToast("Webhook URL copied!", "success");
+    });
+  }
+});
+
+// Copy Verify Token
+document.getElementById("btnCopyVerifyToken")?.addEventListener("click", () => {
+  const tokenInput = document.getElementById("modalVerifyToken");
+  if (tokenInput) {
+    navigator.clipboard.writeText(tokenInput.value).then(() => {
+      showToast("Verify Token copied to clipboard!", "success");
+    }).catch(() => {
+      tokenInput.select();
+      document.execCommand("copy");
+      showToast("Verify Token copied!", "success");
+    });
+  }
+});
+
+// Generate New Verify Token
+document.getElementById("btnGenerateNewVerifyToken")?.addEventListener("click", async () => {
+  const btn = document.getElementById("btnGenerateNewVerifyToken");
+  if (btn) btn.disabled = true;
+  try {
+    const res = await fetch("/api/webhook/generate-token", { method: "POST" });
+    const result = await res.json();
+    if (result.success) {
+      document.getElementById("modalVerifyToken").value = result.data.verifyToken;
+      const metric = document.getElementById("metricVerifyTokenDisplay");
+      if (metric) metric.textContent = result.data.verifyToken;
+      showToast("New Webhook Verify Token generated!", "success");
+    } else {
+      throw new Error(result.message);
+    }
+  } catch (err) {
+    showToast(err.message, "error");
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+});
+
+// Save Custom Token
+document.getElementById("btnSaveCustomToken")?.addEventListener("click", async () => {
+  const token = document.getElementById("modalVerifyToken")?.value?.trim();
+  if (!token) {
+    showToast("Please enter a verify token.", "error");
+    return;
+  }
+  try {
+    const res = await fetch("/api/webhook/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ verifyToken: token })
+    });
+    const result = await res.json();
+    if (result.success) {
+      showToast("Verify token saved successfully!", "success");
+      const metric = document.getElementById("metricVerifyTokenDisplay");
+      if (metric) metric.textContent = token;
+    } else {
+      throw new Error(result.message);
+    }
+  } catch (err) {
+    showToast(err.message, "error");
+  }
+});
+
+// Simulate Reply Modal
+const btnSimulateReply = document.getElementById("btnSimulateReply");
+const simulateReplyModal = document.getElementById("simulateReplyModal");
+const btnCloseSimulateModal = document.getElementById("btnCloseSimulateModal");
+const btnCancelSimulate = document.getElementById("btnCancelSimulate");
+const btnSendSimulatedReply = document.getElementById("btnSendSimulatedReply");
+
+function openSimulateModal() {
+  if (simulateReplyModal) {
+    simulateReplyModal.classList.add("active");
+    simulateReplyModal.style.display = "flex";
+  }
+}
+
+function closeSimulateModal() {
+  if (simulateReplyModal) {
+    simulateReplyModal.classList.remove("active");
+    simulateReplyModal.style.display = "none";
+  }
+}
+
+if (btnSimulateReply) btnSimulateReply.addEventListener("click", openSimulateModal);
+if (btnCloseSimulateModal) btnCloseSimulateModal.addEventListener("click", closeSimulateModal);
+if (btnCancelSimulate) btnCancelSimulate.addEventListener("click", closeSimulateModal);
+
+if (btnSendSimulatedReply) {
+  btnSendSimulatedReply.addEventListener("click", async () => {
+    const phone = document.getElementById("simFromPhone")?.value?.trim() || "919876543210";
+    const name = document.getElementById("simCustomerName")?.value?.trim() || "Customer";
+    const body = document.getElementById("simMessageBody")?.value?.trim() || "Yes, interested!";
+
+    btnSendSimulatedReply.disabled = true;
+    try {
+      const res = await fetch("/api/webhook/test-simulate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fromPhone: phone, customerName: name, messageBody: body })
+      });
+      const result = await res.json();
+      if (result.success) {
+        showToast("Simulated reply received!", "success");
+        closeSimulateModal();
+        loadCustomerReplies();
+      } else {
+        throw new Error(result.message);
+      }
+    } catch (err) {
+      showToast(err.message, "error");
+    } finally {
+      btnSendSimulatedReply.disabled = false;
+    }
+  });
+}
+
+// Mark All Read & Refresh Buttons
+document.getElementById("btnMarkAllRead")?.addEventListener("click", markAllRepliesRead);
+document.getElementById("btnRefreshReplies")?.addEventListener("click", () => {
+  loadCustomerReplies();
+  showToast("Customer replies refreshed.", "success");
+});
+
+// Search & Filter listeners
+document.getElementById("repliesSearchInput")?.addEventListener("input", () => {
+  clearTimeout(repliesSearchDebounceTimer);
+  repliesSearchDebounceTimer = setTimeout(() => {
+    loadCustomerReplies();
+  }, 300);
+});
+
+document.getElementById("repliesFilterStatus")?.addEventListener("change", () => {
+  loadCustomerReplies();
+});
+
+// Run initial Meta check, templates load, webhook config & replies check on page load
 checkMetaStatus();
 loadSystemTemplates();
 updatePhoneMockup();
+loadWebhookConfig();
+loadCustomerReplies();
+initSSE();
+

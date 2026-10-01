@@ -36,8 +36,10 @@ async function runHttpTests() {
   console.log(`  Variables:`, tplData2.data.variables.map(v => v.label));
 
   // Test 4: Excel File Upload
-  console.log("\n[HTTP Test 4] POST /api/upload with Sample_WhatsApp_Contacts.xlsx");
-  const filePath = path.join(__dirname, "Sample_WhatsApp_Contacts.xlsx");
+  let filePath = path.join(__dirname, "Sample_WhatsApp_Contacts.xlsx");
+  if (!fs.existsSync(filePath)) {
+    filePath = path.join(__dirname, "public", "Sample_WhatsApp_Contacts.xlsx");
+  }
   const fileBuffer = fs.readFileSync(filePath);
   const blob = new Blob([fileBuffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
   const formData = new FormData();

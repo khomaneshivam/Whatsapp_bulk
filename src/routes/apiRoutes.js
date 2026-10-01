@@ -62,6 +62,20 @@ router.post("/templates", templateController.addTemplate);
 router.get("/templates/:templateId", templateController.getTemplate);
 router.delete("/templates/:templateId", templateController.deleteTemplate);
 
+// Meta Webhooks & Customer Replies Management
+const webhookController = require("../controllers/webhookController");
+router.get("/webhook", webhookController.handleVerification);
+router.post("/webhook", webhookController.handleIncomingEvent);
+router.get("/webhook/config", webhookController.getConfig);
+router.post("/webhook/generate-token", webhookController.generateNewToken);
+router.post("/webhook/token", webhookController.saveToken);
+router.post("/webhook/test-simulate", webhookController.simulateTestReply);
+
+router.get("/replies", webhookController.listReplies);
+router.post("/replies/:id/mark-read", webhookController.markAsRead);
+router.post("/replies/mark-all-read", webhookController.markAllAsRead);
+router.delete("/replies/:id", webhookController.deleteReply);
+
 // Server-Sent Events (SSE) for Real-Time Broadcast Progress & Live Logs
 router.get("/broadcast/stream", (req, res) => {
   res.setHeader("Content-Type", "text/event-stream");
@@ -81,8 +95,18 @@ router.get("/broadcast/stream", (req, res) => {
     res.write(`data: ${JSON.stringify({ type: "status", ...data })}\n\n`);
   };
 
+  const onReply = (data) => {
+    res.write(`data: ${JSON.stringify({ type: "reply", data })}\n\n`);
+  };
+
+  const onWebhookStatus = (data) => {
+    res.write(`data: ${JSON.stringify({ type: "webhook_status", data })}\n\n`);
+  };
+
   broadcastEngine.on("broadcast:progress", onProgress);
   broadcastEngine.on("campaign:status", onStatus);
+  broadcastEngine.on("webhook:reply", onReply);
+  broadcastEngine.on("webhook:status", onWebhookStatus);
 
   // Keep connection alive with ping every 25s
   const keepAliveTimer = setInterval(() => {
@@ -93,6 +117,8 @@ router.get("/broadcast/stream", (req, res) => {
     clearInterval(keepAliveTimer);
     broadcastEngine.removeListener("broadcast:progress", onProgress);
     broadcastEngine.removeListener("campaign:status", onStatus);
+    broadcastEngine.removeListener("webhook:reply", onReply);
+    broadcastEngine.removeListener("webhook:status", onWebhookStatus);
   });
 });
 

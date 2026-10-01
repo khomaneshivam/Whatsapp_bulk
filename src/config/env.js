@@ -12,6 +12,7 @@ const config = {
   DEFAULT_TEMPLATE_LANG: process.env.DEFAULT_TEMPLATE_LANG || "en",
   DEFAULT_COUNTRY_CODE: process.env.DEFAULT_COUNTRY_CODE || "91",
   BROADCAST_DELAY_MS: parseInt(process.env.BROADCAST_DELAY_MS || "250", 10),
+  WEBHOOK_VERIFY_TOKEN: process.env.WEBHOOK_VERIFY_TOKEN || "wb_verify_konkantrip_7f3a9e2c4b810d56",
   DATA_DIR: path.resolve(__dirname, "../../data"),
   UPLOADS_DIR: path.resolve(__dirname, "../../uploads"),
 };

@@ -77,10 +77,29 @@ function initializeDatabase() {
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
+    CREATE TABLE IF NOT EXISTS customer_replies (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      wa_message_id TEXT UNIQUE,
+      from_phone TEXT NOT NULL,
+      customer_name TEXT,
+      message_type TEXT DEFAULT 'text',
+      message_body TEXT,
+      raw_payload TEXT,
+      context_message_id TEXT,
+      campaign_id TEXT,
+      is_read INTEGER DEFAULT 0,
+      received_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (campaign_id) REFERENCES campaigns(id) ON DELETE SET NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_recipients_campaign ON campaign_recipients(campaign_id);
     CREATE INDEX IF NOT EXISTS idx_recipients_status ON campaign_recipients(campaign_id, status);
     CREATE INDEX IF NOT EXISTS idx_templates_name ON templates(name);
     CREATE INDEX IF NOT EXISTS idx_templates_meta_id ON templates(meta_id);
+    CREATE INDEX IF NOT EXISTS idx_replies_phone ON customer_replies(from_phone);
+    CREATE INDEX IF NOT EXISTS idx_replies_campaign ON customer_replies(campaign_id);
+    CREATE INDEX IF NOT EXISTS idx_replies_received ON customer_replies(received_at);
+    CREATE INDEX IF NOT EXISTS idx_replies_is_read ON customer_replies(is_read);
   `);
 
   // Migrate existing databases: add scheduled_at column if not present
@@ -193,6 +212,9 @@ function initializeDatabase() {
   }
   if (!getSetting.get("DEFAULT_TEMPLATE_LANG")) {
     setSetting.run("DEFAULT_TEMPLATE_LANG", config.DEFAULT_TEMPLATE_LANG || "en");
+  }
+  if (!getSetting.get("WEBHOOK_VERIFY_TOKEN")) {
+    setSetting.run("WEBHOOK_VERIFY_TOKEN", config.WEBHOOK_VERIFY_TOKEN || "wb_verify_konkantrip_7f3a9e2c4b810d56");
   }
 }
 
