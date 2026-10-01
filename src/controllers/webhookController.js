@@ -1,4 +1,5 @@
 const webhookService = require("../services/webhookService");
+const { getSetting } = require("../config/database");
 const config = require("../config/env");
 
 /**
@@ -47,11 +48,12 @@ function handleIncomingEvent(req, res) {
 function getConfig(req, res) {
   try {
     const verifyToken = webhookService.getVerifyToken();
+    const publicTunnelUrl = getSetting("PUBLIC_WEBHOOK_URL");
     const host = req.get("host") || `localhost:${config.PORT}`;
     const protocol = req.protocol === "https" || req.get("x-forwarded-proto") === "https" ? "https" : "http";
 
-    const webhookUrl = `${protocol}://${host}/api/webhook`;
-    const altWebhookUrl = `${protocol}://${host}/webhook`;
+    const webhookUrl = publicTunnelUrl ? `${publicTunnelUrl}/webhook` : `${protocol}://${host}/webhook`;
+    const altWebhookUrl = publicTunnelUrl ? `${publicTunnelUrl}/api/webhook` : `${protocol}://${host}/api/webhook`;
 
     const repliesStats = webhookService.getReplies({ limit: 1 });
 
@@ -61,6 +63,7 @@ function getConfig(req, res) {
         verifyToken,
         webhookUrl,
         altWebhookUrl,
+        publicTunnelUrl: publicTunnelUrl || null,
         totalReplies: repliesStats.totalCount,
         unreadReplies: repliesStats.unreadCount,
         distinctContacts: repliesStats.distinctContacts,
