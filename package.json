@@ -1,0 +1,27 @@
+{
+  "name": "whatsapp-bulk-broadcast",
+  "version": "1.0.0",
+  "description": "Standalone WhatsApp Bulk Broadcasting System via Meta Cloud API with Excel/CSV Upload",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "keywords": [
+    "whatsapp",
+    "meta-cloud-api",
+    "bulk-sms",
+    "broadcast",
+    "excel-parser"
+  ],
+  "author": "KonkanTrip",
+  "license": "ISC",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "multer": "^1.4.5-lts.1",
+    "uuid": "^11.0.5",
+    "xlsx": "^0.18.5"
+  }
+}
