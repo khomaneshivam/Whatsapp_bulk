@@ -80,6 +80,7 @@ document.querySelectorAll(".nav-tab").forEach(tab => {
       loadCampaignsList();
     } else if (targetId === "tab-replies") {
       loadCustomerReplies();
+      loadAutoReplySettings();
     }
   });
 });
@@ -1501,6 +1502,10 @@ function initSSE() {
         handleStatusEvent(data);
       } else if (data.type === "reply") {
         handleIncomingReplySSE(data.data);
+      } else if (data.type === "reply_updated") {
+        if (typeof loadCustomerReplies === "function") {
+          loadCustomerReplies();
+        }
       } else if (data.type === "webhook_status") {
         // Delivery status update received
         if (typeof loadCampaignsList === "function") {
@@ -2190,6 +2195,43 @@ function renderRepliesList(replies) {
       campaignTag = `<span class="reply-campaign-badge" title="Associated Broadcast Campaign">🏷 ${escapeHtml(reply.campaign_name)}</span>`;
     }
 
+    // Outbound reply bubble if already replied
+    let replyBoxHtml = "";
+    if (reply.reply_text) {
+      const isAuto = reply.reply_status === "AUTO_REPLIED";
+      const replyTime = reply.reply_sent_at ? new Date(reply.reply_sent_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "";
+      replyBoxHtml = `
+        <div class="outbound-reply-box">
+          <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.72rem;">
+            <span style="font-weight: 600; color: #25d366; display: flex; align-items: center; gap: 0.35rem;">
+              <span>✓</span> ${isAuto ? '🤖 Automated Auto-Reply' : '💬 Business Reply Sent'}
+            </span>
+            <span style="color: var(--text-muted); font-size: 0.68rem;">${replyTime}</span>
+          </div>
+          <div style="font-size: 0.83rem; color: #fff; line-height: 1.4; word-break: break-word;">
+            ${escapeHtml(reply.reply_text)}
+          </div>
+        </div>
+      `;
+    }
+
+    // Inline 2-way reply drawer
+    const inlineReplyDrawer = `
+      <div id="reply-drawer-${reply.id}" class="inline-reply-drawer" style="display: none;">
+        <div style="display: flex; gap: 0.35rem; margin-bottom: 0.5rem; flex-wrap: wrap;">
+          <span class="quick-reply-pill" onclick="insertQuickReply(${reply.id}, 'Thank you for reaching out! Our team is processing your request.')">Thanks / Processing</span>
+          <span class="quick-reply-pill" onclick="insertQuickReply(${reply.id}, 'Hi! Could you please share more details so we can assist you?')">Need Details</span>
+          <span class="quick-reply-pill" onclick="insertQuickReply(${reply.id}, 'Here is the link to register as a partner: https://konkantrip.com/partner')">Partner Link</span>
+        </div>
+        <div style="display: flex; gap: 0.5rem;">
+          <input type="text" id="input-reply-${reply.id}" class="form-input" placeholder="Type reply message to +${cleanPhone}..." style="font-size: 0.82rem;" onkeydown="if(event.key==='Enter') sendCustomerReply(${reply.id})">
+          <button class="btn btn-primary btn-sm" id="btn-send-reply-${reply.id}" onclick="sendCustomerReply(${reply.id})" style="white-space: nowrap; padding: 0.35rem 0.85rem;">
+            Send ➔
+          </button>
+        </div>
+      </div>
+    `;
+
     card.innerHTML = `
       <div class="reply-avatar">${initials}</div>
       <div class="reply-main">
@@ -2200,6 +2242,7 @@ function renderRepliesList(replies) {
           ${typeBadge}
         </div>
         <div class="reply-bubble">${escapeHtml(reply.message_body || "")}</div>
+        ${replyBoxHtml}
         <div class="reply-footer-row">
           <span class="reply-timestamp">
             <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
@@ -2210,6 +2253,9 @@ function renderRepliesList(replies) {
             ${reply.is_read ? '<span style="color:#64748b; margin-left:6px;">• Read</span>' : '<span style="color:#3b82f6; font-weight:600; margin-left:6px;">• New</span>'}
           </span>
           <div class="reply-actions-row">
+            <button class="btn btn-primary btn-sm" onclick="toggleReplyBox(${reply.id})" style="padding: 0.25rem 0.65rem; font-size: 0.72rem;">
+              💬 Reply
+            </button>
             <a href="https://wa.me/${cleanPhone}" target="_blank" class="btn-whatsapp-chat" title="Open direct WhatsApp chat with this customer">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
                 <path d="M12.04 2c-5.46 0-9.91 4.45-9.91 9.91 0 1.75.46 3.45 1.32 4.95L2.05 22l5.25-1.38c1.45.79 3.08 1.21 4.74 1.21 5.46 0 9.91-4.45 9.91-9.91 0-2.65-1.03-5.14-2.9-7.01A9.816 9.816 0 0 0 12.04 2zm.01 1.67c2.2 0 4.26.86 5.82 2.42a8.204 8.204 0 0 1 2.41 5.82c0 4.54-3.7 8.24-8.24 8.24-1.42 0-2.82-.37-4.06-1.07l-.29-.17-3.02.79.81-2.94-.19-.3a8.196 8.196 0 0 1-1.25-4.37c0-4.54 3.7-8.24 8.24-8.24zm4.78 11.66c-.2-.1-.1.19-.38-.05-.28-.24-1.63-.8-1.88-.9-.25-.09-.43-.14-.61.14-.18.28-.71.9-.87 1.08-.16.19-.32.21-.6.07-.28-.14-1.18-.44-2.25-1.39-.83-.74-1.39-1.66-1.55-1.94-.16-.28-.02-.43.12-.57.13-.13.28-.32.42-.48.14-.16.19-.28.28-.46.09-.19.05-.35-.02-.49-.07-.14-.61-1.47-.84-2.02-.22-.53-.45-.46-.61-.47h-.52c-.18 0-.48.07-.73.35-.25.28-.96.94-.96 2.3s.98 2.67 1.12 2.86c.14.19 1.93 2.95 4.68 4.14.65.28 1.16.45 1.56.58.66.21 1.26.18 1.73.11.53-.08 1.63-.67 1.86-1.31.23-.65.23-1.2.16-1.31-.07-.12-.25-.19-.53-.29z"/>
@@ -2224,6 +2270,7 @@ function renderRepliesList(replies) {
             <button class="btn btn-secondary btn-sm" onclick="deleteCustomerReply(${reply.id})" style="padding: 0.25rem 0.5rem; font-size: 0.72rem; color: #ef4444;" title="Delete reply">✕</button>
           </div>
         </div>
+        ${inlineReplyDrawer}
       </div>
     `;
 
@@ -2534,11 +2581,161 @@ document.getElementById("repliesFilterStatus")?.addEventListener("change", () =>
   loadCustomerReplies();
 });
 
+// Customer Reply & Auto-Reply Handlers
+window.toggleReplyBox = function(id) {
+  const drawer = document.getElementById(`reply-drawer-${id}`);
+  if (!drawer) return;
+  const isHidden = drawer.style.display === "none" || !drawer.style.display;
+  drawer.style.display = isHidden ? "block" : "none";
+  if (isHidden) {
+    const input = document.getElementById(`input-reply-${id}`);
+    if (input) input.focus();
+  }
+};
+
+window.insertQuickReply = function(id, text) {
+  const input = document.getElementById(`input-reply-${id}`);
+  if (input) {
+    input.value = text;
+    input.focus();
+  }
+};
+
+window.sendCustomerReply = async function(id) {
+  const input = document.getElementById(`input-reply-${id}`);
+  const btn = document.getElementById(`btn-send-reply-${id}`);
+  const text = (input?.value || "").trim();
+
+  if (!text) {
+    showToast("Please enter a reply message.", "error");
+    return;
+  }
+
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "Sending...";
+  }
+
+  try {
+    const res = await fetch(`/api/replies/${encodeURIComponent(id)}/reply`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ replyText: text })
+    });
+    const result = await res.json();
+    if (result.success) {
+      showToast("Reply delivered via WhatsApp!", "success");
+      if (input) input.value = "";
+      const drawer = document.getElementById(`reply-drawer-${id}`);
+      if (drawer) drawer.style.display = "none";
+      await loadCustomerReplies();
+    } else {
+      throw new Error(result.message || "Failed to send reply");
+    }
+  } catch (err) {
+    showToast(`Reply error: ${err.message}`, "error");
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "Send ➔";
+    }
+  }
+};
+
+// Auto-Reply Settings & Modal Management
+async function loadAutoReplySettings() {
+  try {
+    const res = await fetch("/api/replies/auto-reply-settings");
+    const json = await res.json();
+    if (json.success && json.data) {
+      const { enabled, message } = json.data;
+      const badge = document.getElementById("badgeAutoReplyStatus");
+      const preview = document.getElementById("textAutoReplyPreview");
+      const chk = document.getElementById("chkAutoReplyEnabled");
+      const txt = document.getElementById("txtAutoReplyMessage");
+
+      if (badge) {
+        badge.textContent = enabled ? "Active" : "Disabled";
+        badge.style.background = enabled ? "rgba(16, 185, 129, 0.2)" : "rgba(239, 68, 68, 0.2)";
+        badge.style.color = enabled ? "#34d399" : "#f87171";
+      }
+
+      if (preview) {
+        preview.textContent = enabled
+          ? `Template: "${message}"`
+          : "Automated instant replies are currently disabled.";
+      }
+
+      if (chk) chk.checked = !!enabled;
+      if (txt && message) txt.value = message;
+    }
+  } catch (err) {
+    console.warn("Failed to load auto-reply settings:", err.message);
+  }
+}
+
+const btnOpenAutoReplyModal = document.getElementById("btnOpenAutoReplyModal");
+const autoReplyModal = document.getElementById("autoReplyModal");
+const btnCloseAutoReplyModal = document.getElementById("btnCloseAutoReplyModal");
+const btnCancelAutoReplyModal = document.getElementById("btnCancelAutoReplyModal");
+const btnSaveAutoReplySettings = document.getElementById("btnSaveAutoReplySettings");
+
+function openAutoReplyModal() {
+  if (autoReplyModal) {
+    autoReplyModal.classList.add("active");
+    autoReplyModal.style.display = "flex";
+  }
+}
+
+function closeAutoReplyModal() {
+  if (autoReplyModal) {
+    autoReplyModal.classList.remove("active");
+    autoReplyModal.style.display = "none";
+  }
+}
+
+if (btnOpenAutoReplyModal) btnOpenAutoReplyModal.addEventListener("click", openAutoReplyModal);
+if (btnCloseAutoReplyModal) btnCloseAutoReplyModal.addEventListener("click", closeAutoReplyModal);
+if (btnCancelAutoReplyModal) btnCancelAutoReplyModal.addEventListener("click", closeAutoReplyModal);
+
+if (btnSaveAutoReplySettings) {
+  btnSaveAutoReplySettings.addEventListener("click", async () => {
+    const enabled = document.getElementById("chkAutoReplyEnabled")?.checked ?? true;
+    const message = document.getElementById("txtAutoReplyMessage")?.value?.trim() || "";
+
+    btnSaveAutoReplySettings.disabled = true;
+    btnSaveAutoReplySettings.textContent = "Saving...";
+
+    try {
+      const res = await fetch("/api/replies/auto-reply-settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled, message })
+      });
+      const data = await res.json();
+      if (data.success) {
+        showToast("Auto-reply settings saved successfully!", "success");
+        closeAutoReplyModal();
+        await loadAutoReplySettings();
+      } else {
+        throw new Error(data.message || "Failed to save settings");
+      }
+    } catch (err) {
+      showToast(err.message, "error");
+    } finally {
+      btnSaveAutoReplySettings.disabled = false;
+      btnSaveAutoReplySettings.textContent = "Save Auto-Reply Settings";
+    }
+  });
+}
+
 // Run initial Meta check, templates load, webhook config & replies check on page load
 checkMetaStatus();
 loadSystemTemplates();
 updatePhoneMockup();
 loadWebhookConfig();
 loadCustomerReplies();
+loadAutoReplySettings();
 initSSE();
+
 

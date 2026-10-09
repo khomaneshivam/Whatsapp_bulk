@@ -114,6 +114,23 @@ function initializeDatabase() {
     console.warn("[DB Migration] scheduled_at check:", migErr.message);
   }
 
+  // Migrate customer_replies: add reply tracking columns if not present
+  try {
+    const replyTableInfo = db.prepare("PRAGMA table_info(customer_replies)").all();
+    const cols = replyTableInfo.map(c => c.name);
+    if (!cols.includes("reply_text")) {
+      db.exec("ALTER TABLE customer_replies ADD COLUMN reply_text TEXT;");
+    }
+    if (!cols.includes("reply_sent_at")) {
+      db.exec("ALTER TABLE customer_replies ADD COLUMN reply_sent_at DATETIME;");
+    }
+    if (!cols.includes("reply_status")) {
+      db.exec("ALTER TABLE customer_replies ADD COLUMN reply_status TEXT;");
+    }
+  } catch (migErr2) {
+    console.warn("[DB Migration] customer_replies columns check:", migErr2.message);
+  }
+
   // Seed default templates if empty
   try {
     const templateCount = db.prepare("SELECT COUNT(*) as count FROM templates").get().count;
@@ -215,6 +232,15 @@ function initializeDatabase() {
   }
   if (!getSetting.get("WEBHOOK_VERIFY_TOKEN")) {
     setSetting.run("WEBHOOK_VERIFY_TOKEN", config.WEBHOOK_VERIFY_TOKEN || "wb_verify_konkantrip_7f3a9e2c4b810d56");
+  }
+  if (!getSetting.get("AUTO_REPLY_ENABLED")) {
+    setSetting.run("AUTO_REPLY_ENABLED", "true");
+  }
+  if (!getSetting.get("AUTO_REPLY_MESSAGE")) {
+    setSetting.run(
+      "AUTO_REPLY_MESSAGE",
+      "Hi {{name}}, thank you for reaching out to KonkanTrip! We have received your message and our team will get back to you shortly."
+    );
   }
 }
 

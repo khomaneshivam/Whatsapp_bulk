@@ -74,6 +74,9 @@ router.get("/webhook/test-handshake", webhookController.testHandshake);
 router.post("/webhook/tunnel/restart", webhookController.restartTunnel);
 
 router.get("/replies", webhookController.listReplies);
+router.get("/replies/auto-reply-settings", webhookController.getAutoReplySettings);
+router.post("/replies/auto-reply-settings", webhookController.updateAutoReplySettings);
+router.post("/replies/:id/reply", webhookController.sendManualReply);
 router.post("/replies/:id/mark-read", webhookController.markAsRead);
 router.post("/replies/mark-all-read", webhookController.markAllAsRead);
 router.delete("/replies/:id", webhookController.deleteReply);
@@ -105,9 +108,14 @@ router.get("/broadcast/stream", (req, res) => {
     res.write(`data: ${JSON.stringify({ type: "webhook_status", data })}\n\n`);
   };
 
+  const onReplyUpdated = (data) => {
+    res.write(`data: ${JSON.stringify({ type: "reply_updated", data })}\n\n`);
+  };
+
   broadcastEngine.on("broadcast:progress", onProgress);
   broadcastEngine.on("campaign:status", onStatus);
   broadcastEngine.on("webhook:reply", onReply);
+  broadcastEngine.on("webhook:reply_updated", onReplyUpdated);
   broadcastEngine.on("webhook:status", onWebhookStatus);
 
   // Keep connection alive with ping every 25s
@@ -120,6 +128,7 @@ router.get("/broadcast/stream", (req, res) => {
     broadcastEngine.removeListener("broadcast:progress", onProgress);
     broadcastEngine.removeListener("campaign:status", onStatus);
     broadcastEngine.removeListener("webhook:reply", onReply);
+    broadcastEngine.removeListener("webhook:reply_updated", onReplyUpdated);
     broadcastEngine.removeListener("webhook:status", onWebhookStatus);
   });
 });

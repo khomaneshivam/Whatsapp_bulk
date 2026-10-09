@@ -287,6 +287,65 @@ function simulateTestReply(req, res) {
   }
 }
 
+/**
+ * Sends a manual WhatsApp reply to a customer from the dashboard
+ */
+async function sendManualReply(req, res) {
+  try {
+    const { id } = req.params;
+    const { replyText } = req.body || {};
+
+    if (!replyText || !String(replyText).trim()) {
+      return res.status(400).json({ success: false, message: "Reply message cannot be empty." });
+    }
+
+    const updated = await webhookService.sendManualReply({
+      replyId: id,
+      replyText: String(replyText).trim()
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Reply sent successfully via WhatsApp.",
+      data: updated
+    });
+  } catch (error) {
+    console.error("[WebhookController] sendManualReply error:", error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+}
+
+/**
+ * Gets Auto-Reply settings
+ */
+function getAutoReplySettings(req, res) {
+  try {
+    const settings = webhookService.getAutoReplySettings();
+    return res.status(200).json({ success: true, data: settings });
+  } catch (error) {
+    console.error("[WebhookController] getAutoReplySettings error:", error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+}
+
+/**
+ * Updates Auto-Reply settings
+ */
+function updateAutoReplySettings(req, res) {
+  try {
+    const { enabled, message } = req.body || {};
+    const updated = webhookService.saveAutoReplySettings({ enabled, message });
+    return res.status(200).json({
+      success: true,
+      message: "Auto-reply settings updated successfully.",
+      data: updated
+    });
+  } catch (error) {
+    console.error("[WebhookController] updateAutoReplySettings error:", error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+}
+
 module.exports = {
   handleVerification,
   handleIncomingEvent,
@@ -299,5 +358,8 @@ module.exports = {
   deleteReply,
   simulateTestReply,
   testHandshake,
-  restartTunnel
+  restartTunnel,
+  sendManualReply,
+  getAutoReplySettings,
+  updateAutoReplySettings
 };

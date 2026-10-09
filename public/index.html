@@ -646,6 +646,27 @@ KonkanTrip Partner Team</textarea>
             <span class="metric-pill-label">Webhook Verify Token</span>
             <span class="metric-pill-val" id="metricVerifyTokenDisplay" style="font-family: monospace; font-size: 0.82rem; color: #10b981; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">Loading...</span>
           </div>
+        <!-- Auto-Reply Banner & Configuration Bar -->
+        <div class="auto-reply-strip" style="display: flex; justify-content: space-between; align-items: center; background: rgba(37, 211, 102, 0.08); border: 1px solid rgba(37, 211, 102, 0.2); border-radius: var(--radius-md); padding: 0.75rem 1rem; margin-bottom: 1.25rem; flex-wrap: wrap; gap: 0.75rem;">
+          <div style="display: flex; align-items: center; gap: 0.65rem;">
+            <div style="width: 32px; height: 32px; border-radius: 8px; background: rgba(37, 211, 102, 0.15); display: flex; align-items: center; justify-content: center; font-size: 1.1rem;">
+              🤖
+            </div>
+            <div>
+              <div style="font-size: 0.85rem; font-weight: 600; color: #fff; display: flex; align-items: center; gap: 0.5rem;">
+                Instant WhatsApp Auto-Reply
+                <span id="badgeAutoReplyStatus" class="badge" style="background: rgba(16, 185, 129, 0.2); color: #34d399; font-size: 0.7rem; padding: 0.15rem 0.5rem;">Active</span>
+              </div>
+              <div id="textAutoReplyPreview" style="font-size: 0.74rem; color: var(--text-muted); max-width: 580px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                Loading auto-reply configuration...
+              </div>
+            </div>
+          </div>
+          <div style="display: flex; gap: 0.5rem;">
+            <button class="btn btn-secondary btn-sm" id="btnOpenAutoReplyModal" style="font-size: 0.76rem; padding: 0.35rem 0.75rem;">
+              ⚙️ Configure Auto-Reply
+            </button>
+          </div>
         </div>
 
         <!-- Filter & Search Controls -->
@@ -1004,6 +1025,61 @@ KonkanTrip Partner Team</textarea>
       <div style="display: flex; justify-content: flex-end; gap: 0.5rem;">
         <button class="btn btn-secondary" id="btnCancelSimulate">Cancel</button>
         <button class="btn btn-primary" id="btnSendSimulatedReply">📨 Receive Simulated Reply</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Auto-Reply Configuration Modal -->
+  <div class="modal-backdrop" id="autoReplyModal" style="display: none;">
+    <div class="modal-box" style="max-width: 540px;">
+      <div class="modal-header">
+        <div style="display: flex; align-items: center; gap: 0.6rem;">
+          <div style="background: rgba(37, 211, 102, 0.15); color: #25d366; width: 34px; height: 34px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 1.1rem;">
+            🤖
+          </div>
+          <div>
+            <h3 style="margin: 0; font-size: 1.15rem;">Automated WhatsApp Replies</h3>
+            <div style="font-size: 0.74rem; color: var(--text-muted);">Instantly respond to incoming customer messages via Meta Cloud API</div>
+          </div>
+        </div>
+        <button class="modal-close" id="btnCloseAutoReplyModal">&times;</button>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 1rem;">
+        <!-- Toggle Switch -->
+        <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.75rem 1rem; background: rgba(255,255,255,0.03); border: 1px solid var(--border-glass); border-radius: 8px;">
+          <div>
+            <div style="font-weight: 600; font-size: 0.85rem; color: #fff;">Enable Automated Instant Replies</div>
+            <div style="font-size: 0.72rem; color: var(--text-muted);">When a customer messages in, immediately send back an automated confirmation</div>
+          </div>
+          <label style="position: relative; display: inline-flex; align-items: center; cursor: pointer;">
+            <input type="checkbox" id="chkAutoReplyEnabled" checked style="width: 18px; height: 18px; accent-color: #10b981; cursor: pointer;">
+          </label>
+        </div>
+
+        <!-- Message Body -->
+        <div class="form-group">
+          <label class="form-label" for="txtAutoReplyMessage">Auto-Reply Message Template</label>
+          <textarea id="txtAutoReplyMessage" class="form-textarea" rows="4" placeholder="Type automated reply message...">Hi {{name}}, thank you for reaching out to KonkanTrip! We have received your message and our team will get back to you shortly.</textarea>
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 0.4rem;">
+            <div style="font-size: 0.72rem; color: var(--text-muted);">
+              Click tag to insert: 
+              <span class="var-chip" onclick="document.getElementById('txtAutoReplyMessage').value += ' {{name}}';" style="cursor: pointer; padding: 0.1rem 0.4rem; font-size: 0.7rem;">{{name}}</span>
+            </div>
+            <div style="font-size: 0.7rem; color: #34d399;">
+              🛡️ Anti-loop throttling active (15 min cooldown)
+            </div>
+          </div>
+        </div>
+
+        <div style="font-size: 0.74rem; color: var(--text-muted); line-height: 1.5; background: rgba(59, 130, 246, 0.08); border: 1px solid rgba(59, 130, 246, 0.2); border-radius: 6px; padding: 0.6rem 0.8rem;">
+          💡 <strong>24-Hour Customer Care Window:</strong> When a customer messages your business first, Meta permits direct free-form replies without needing pre-approved templates.
+        </div>
+      </div>
+
+      <div class="modal-footer" style="margin-top: 1.25rem; display: flex; justify-content: flex-end; gap: 0.5rem;">
+        <button class="btn btn-secondary" id="btnCancelAutoReplyModal">Cancel</button>
+        <button class="btn btn-primary" id="btnSaveAutoReplySettings">Save Auto-Reply Settings</button>
       </div>
     </div>
   </div>

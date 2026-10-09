@@ -4,6 +4,7 @@ const crypto = require("crypto");
 const { db, getSetting, setSetting } = require("../config/database");
 const config = require("../config/env");
 const broadcastEngine = require("./broadcastEngine");
+const { sendTextMessage } = require("./metaWhatsAppService");
 
 class WebhookService {
   /**
@@ -97,6 +98,11 @@ class WebhookService {
                 processedMessages++;
                 // Emit real-time event for SSE clients
                 broadcastEngine.emit("webhook:reply", result.reply);
+
+                // Auto-reply trigger (asynchronous)
+                this.triggerAutoReply(result.reply).catch(arErr => {
+                  console.error("[Webhook AutoReply] Error:", arErr.message);
+                });
               }
             } catch (err) {
               console.error("[Webhook] Error saving customer reply:", err);
@@ -377,6 +383,9 @@ class WebhookService {
         r.campaign_id,
         r.is_read,
         r.received_at,
+        r.reply_text,
+        r.reply_sent_at,
+        r.reply_status,
         c.name as campaign_name
       FROM customer_replies r
       LEFT JOIN campaigns c ON r.campaign_id = c.id
@@ -459,6 +468,147 @@ class WebhookService {
     };
 
     return this.processIncomingPayload(fakePayload);
+  }
+
+  /**
+   * Automatically sends an automated WhatsApp reply to incoming customer message
+   */
+  async triggerAutoReply(replyRecord) {
+    if (!replyRecord || !replyRecord.from_phone) return null;
+
+    const enabled = getSetting("AUTO_REPLY_ENABLED");
+    if (enabled !== "true" && enabled !== true) {
+      return null;
+    }
+
+    const cleanPhone = String(replyRecord.from_phone).replace(/\D/g, "");
+    if (!cleanPhone || cleanPhone.length < 10) return null;
+
+    // Debounce / Anti-Loop check: Don't auto-reply if we already auto-replied to this contact within last 15 minutes
+    try {
+      const recentAutoReply = db.prepare(`
+        SELECT id FROM customer_replies 
+        WHERE from_phone = ? AND reply_status = 'AUTO_REPLIED' 
+        AND reply_sent_at > datetime('now', '-15 minutes')
+        LIMIT 1
+      `).get(replyRecord.from_phone);
+
+      if (recentAutoReply) {
+        console.log(`[Webhook AutoReply] Throttled: Already auto-replied to ${cleanPhone} in the last 15 minutes.`);
+        return null;
+      }
+    } catch (checkErr) {
+      console.warn("[Webhook AutoReply] Throttling check warning:", checkErr.message);
+    }
+
+    // Format auto-reply template message
+    let templateMsg = getSetting("AUTO_REPLY_MESSAGE") || 
+      "Hi {{name}}, thank you for reaching out to KonkanTrip! We have received your message. Our team will get back to you shortly.";
+    
+    const customerName = replyRecord.customer_name ? replyRecord.customer_name.trim() : "there";
+    const finalMsg = templateMsg.replace(/\{\{name\}\}/gi, customerName);
+
+    console.log(`[Webhook AutoReply] Sending auto-reply to ${cleanPhone} (${customerName}): "${finalMsg}"`);
+
+    try {
+      const sendResult = await sendTextMessage({
+        to: cleanPhone,
+        body: finalMsg
+      });
+
+      const nowIso = new Date().toISOString().replace("T", " ").substring(0, 19);
+      db.prepare(`
+        UPDATE customer_replies 
+        SET reply_text = ?, reply_sent_at = ?, reply_status = 'AUTO_REPLIED' 
+        WHERE id = ?
+      `).run(finalMsg, nowIso, replyRecord.id);
+
+      const updatedRecord = {
+        ...replyRecord,
+        reply_text: finalMsg,
+        reply_sent_at: nowIso,
+        reply_status: 'AUTO_REPLIED'
+      };
+
+      broadcastEngine.emit("webhook:reply_updated", updatedRecord);
+      console.log(`[Webhook AutoReply] ✓ Auto-reply delivered to ${cleanPhone}. Message ID: ${sendResult.messageId || 'OK'}`);
+
+      return {
+        success: true,
+        messageId: sendResult.messageId,
+        replyText: finalMsg
+      };
+    } catch (err) {
+      console.error(`[Webhook AutoReply] ✗ Failed to send auto-reply to ${cleanPhone}:`, err.message);
+      try {
+        db.prepare(`UPDATE customer_replies SET reply_status = 'FAILED' WHERE id = ?`).run(replyRecord.id);
+      } catch (e) {}
+      return { success: false, error: err.message };
+    }
+  }
+
+  /**
+   * Manually sends a custom reply from the dashboard to a customer
+   */
+  async sendManualReply({ replyId, replyText }) {
+    if (!replyId) throw new Error("Reply ID is required.");
+    if (!replyText || !String(replyText).trim()) throw new Error("Reply message cannot be empty.");
+
+    const cleanText = String(replyText).trim();
+    const record = db.prepare("SELECT * FROM customer_replies WHERE id = ?").get(replyId);
+    if (!record) {
+      throw new Error(`Customer reply #${replyId} not found.`);
+    }
+
+    const cleanPhone = String(record.from_phone).replace(/\D/g, "");
+    console.log(`[Webhook Reply] Sending manual reply to ${cleanPhone}: "${cleanText}"`);
+
+    const sendResult = await sendTextMessage({
+      to: cleanPhone,
+      body: cleanText
+    });
+
+    const nowIso = new Date().toISOString().replace("T", " ").substring(0, 19);
+    db.prepare(`
+      UPDATE customer_replies 
+      SET reply_text = ?, reply_sent_at = ?, reply_status = 'SENT', is_read = 1 
+      WHERE id = ?
+    `).run(cleanText, nowIso, replyId);
+
+    const updatedRecord = {
+      ...record,
+      reply_text: cleanText,
+      reply_sent_at: nowIso,
+      reply_status: 'SENT',
+      is_read: 1
+    };
+
+    broadcastEngine.emit("webhook:reply_updated", updatedRecord);
+    console.log(`[Webhook Reply] ✓ Manual reply delivered to ${cleanPhone}. Message ID: ${sendResult.messageId || 'OK'}`);
+
+    return updatedRecord;
+  }
+
+  /**
+   * Gets current auto-reply settings
+   */
+  getAutoReplySettings() {
+    return {
+      enabled: getSetting("AUTO_REPLY_ENABLED") === "true",
+      message: getSetting("AUTO_REPLY_MESSAGE") || "Hi {{name}}, thank you for reaching out to KonkanTrip! We have received your message and our team will get back to you shortly."
+    };
+  }
+
+  /**
+   * Updates auto-reply settings
+   */
+  saveAutoReplySettings({ enabled, message }) {
+    const isEnabled = enabled === true || enabled === "true";
+    setSetting("AUTO_REPLY_ENABLED", isEnabled ? "true" : "false");
+    if (message && String(message).trim()) {
+      setSetting("AUTO_REPLY_MESSAGE", String(message).trim());
+    }
+    return this.getAutoReplySettings();
   }
 }
 
