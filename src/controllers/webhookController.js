@@ -1,4 +1,5 @@
 const webhookService = require("../services/webhookService");
+const tunnelService = require("../services/tunnelService");
 const { getSetting } = require("../config/database");
 const config = require("../config/env");
 
@@ -10,9 +11,11 @@ function handleVerification(req, res) {
     const { verified, challenge } = webhookService.verifyHandshake(req.query);
 
     if (verified) {
+      console.log(`[Webhook Handshake] Meta verification SUCCEEDED for challenge: ${challenge}`);
       // Must respond with the plain challenge string and HTTP 200
       return res.status(200).send(challenge);
     } else {
+      console.warn(`[Webhook Handshake] Meta verification FAILED for query:`, req.query);
       return res.status(403).send("Forbidden: Invalid verification token or hub.mode");
     }
   } catch (error) {
@@ -30,11 +33,13 @@ function handleIncomingEvent(req, res) {
 
   // Asynchronously process the payload
   const payload = req.body;
+  console.log("[Webhook] Received incoming Meta notification:", JSON.stringify(payload));
+
   webhookService
     .processIncomingPayload(payload)
     .then(result => {
       if (result.processed > 0) {
-        console.log(`[WebhookController] Processed ${result.messages} message(s), ${result.statuses} status update(s).`);
+        console.log(`[WebhookController] Processed ${result.messages} customer reply(ies), ${result.statuses} delivery status update(s).`);
       }
     })
     .catch(err => {
@@ -48,7 +53,8 @@ function handleIncomingEvent(req, res) {
 function getConfig(req, res) {
   try {
     const verifyToken = webhookService.getVerifyToken();
-    const publicTunnelUrl = getSetting("PUBLIC_WEBHOOK_URL");
+    const tunnelStatus = tunnelService.getStatus();
+    const publicTunnelUrl = tunnelStatus.url || getSetting("PUBLIC_WEBHOOK_URL");
     const host = req.get("host") || `localhost:${config.PORT}`;
     const protocol = req.protocol === "https" || req.get("x-forwarded-proto") === "https" ? "https" : "http";
 
@@ -64,6 +70,8 @@ function getConfig(req, res) {
         webhookUrl,
         altWebhookUrl,
         publicTunnelUrl: publicTunnelUrl || null,
+        tunnelConnected: Boolean(publicTunnelUrl),
+        tunnelType: tunnelStatus.type,
         totalReplies: repliesStats.totalCount,
         unreadReplies: repliesStats.unreadCount,
         distinctContacts: repliesStats.distinctContacts,
@@ -72,6 +80,64 @@ function getConfig(req, res) {
     });
   } catch (error) {
     console.error("[WebhookController] getConfig error:", error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+}
+
+/**
+ * Tests the live webhook handshake from the server to verify Meta connectivity
+ */
+async function testHandshake(req, res) {
+  try {
+    const verifyToken = webhookService.getVerifyToken();
+    const tunnelStatus = tunnelService.getStatus();
+    const publicUrl = tunnelStatus.url || getSetting("PUBLIC_WEBHOOK_URL") || `http://localhost:${config.PORT}`;
+    const testUrl = `${publicUrl}/webhook?hub.mode=subscribe&hub.challenge=test_meta_challenge_123&hub.verify_token=${encodeURIComponent(verifyToken)}`;
+
+    const response = await fetch(testUrl, { method: "GET" });
+    const text = await response.text();
+
+    if (response.status === 200 && text === "test_meta_challenge_123") {
+      return res.status(200).json({
+        success: true,
+        message: "Handshake verified successfully! Meta will be able to verify your webhook.",
+        data: {
+          status: response.status,
+          challengeResponse: text,
+          testedUrl: testUrl
+        }
+      });
+    } else {
+      return res.status(400).json({
+        success: false,
+        message: `Handshake verification failed (HTTP ${response.status}): ${text}`,
+        data: {
+          status: response.status,
+          responseBody: text,
+          testedUrl: testUrl
+        }
+      });
+    }
+  } catch (error) {
+    console.error("[WebhookController] testHandshake error:", error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+}
+
+/**
+ * Restarts the background tunnel
+ */
+async function restartTunnel(req, res) {
+  try {
+    console.log("[WebhookController] Manual tunnel restart requested from UI...");
+    const result = await tunnelService.restart();
+    return res.status(200).json({
+      success: true,
+      message: "Tunnel restarted successfully.",
+      data: tunnelService.getStatus()
+    });
+  } catch (error) {
+    console.error("[WebhookController] restartTunnel error:", error);
     return res.status(500).json({ success: false, message: error.message });
   }
 }
@@ -231,5 +297,7 @@ module.exports = {
   markAsRead,
   markAllAsRead,
   deleteReply,
-  simulateTestReply
+  simulateTestReply,
+  testHandshake,
+  restartTunnel
 };

@@ -888,7 +888,25 @@ KonkanTrip Partner Team</textarea>
         <button class="modal-close" id="btnCloseWebhookModal">&times;</button>
       </div>
 
-      <div style="display: flex; flex-direction: column; gap: 1.25rem;">
+        <!-- Live Tunnel Status Bar -->
+        <div id="tunnelStatusBar" style="display: flex; align-items: center; justify-content: space-between; padding: 0.75rem 1rem; border-radius: 8px; background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.25);">
+          <div style="display: flex; align-items: center; gap: 0.5rem;">
+            <span id="tunnelStatusDot" style="width: 10px; height: 10px; border-radius: 50%; background: #10b981; display: inline-block;"></span>
+            <span id="tunnelStatusText" style="font-size: 0.8rem; font-weight: 600; color: #10b981;">Tunnel Connected</span>
+            <span id="tunnelProviderBadge" class="badge" style="background: rgba(255,255,255,0.06); color: var(--text-muted); font-size: 0.7rem; padding: 0.15rem 0.4rem;">localtunnel</span>
+          </div>
+          <div style="display: flex; gap: 0.4rem;">
+            <button class="btn btn-secondary btn-sm" id="btnTestWebhookHandshake" style="padding: 0.25rem 0.65rem; font-size: 0.74rem;">
+              ⚡ Test Handshake
+            </button>
+            <button class="btn btn-secondary btn-sm" id="btnRestartTunnel" style="padding: 0.25rem 0.65rem; font-size: 0.74rem;">
+              🔄 Restart Tunnel
+            </button>
+          </div>
+        </div>
+
+        <div id="handshakeResultBox" style="display: none; padding: 0.65rem 0.9rem; border-radius: 8px; font-size: 0.78rem;"></div>
+
         <!-- Step 1: Webhook URL -->
         <div style="background: rgba(255,255,255,0.03); border: 1px solid var(--border-glass); border-radius: 10px; padding: 1rem;">
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
@@ -903,7 +921,7 @@ KonkanTrip Partner Team</textarea>
             <input type="text" id="modalWebhookUrl" class="form-input" readonly style="background: rgba(0,0,0,0.3); font-family: monospace; font-size: 0.82rem; color: #34d399; cursor: pointer;">
           </div>
           <div style="font-size: 0.72rem; color: var(--text-muted); margin-top: 0.45rem;">
-            💡 Meta requires a public <strong>HTTPS</strong> URL. If running locally, start an HTTPS tunnel (e.g. <code>ngrok http 5000</code>) and paste your public HTTPS domain here.
+            ⚡ <strong>Single-Shot Auto Tunnel:</strong> Automatically starts on <code>npm run dev</code>! No need to run a separate terminal.
           </div>
         </div>
 
@@ -945,7 +963,7 @@ KonkanTrip Partner Team</textarea>
             <li>In the left sidebar, click <strong>WhatsApp</strong> &gt; <strong>Configuration</strong>.</li>
             <li>Find <strong>Webhook</strong> and click <strong>Edit</strong>.</li>
             <li>Paste the <strong>Callback URL</strong> and <strong>Verify Token</strong> from above, then click <strong>Verify and Save</strong>.</li>
-            <li>Under <strong>Webhook fields</strong>, click <strong>Manage</strong> and click <strong>Subscribe</strong> next to <code>messages</code>.</li>
+            <li><strong style="color: #fbbf24;">CRITICAL:</strong> Under <strong>Webhook fields</strong>, click <strong>Manage</strong> and click <strong>Subscribe</strong> next to <code>messages</code>. <em>(Without this, Meta will NOT forward incoming customer replies!)</em></li>
           </ol>
         </div>
       </div>

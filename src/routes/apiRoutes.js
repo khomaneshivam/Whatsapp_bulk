@@ -70,6 +70,8 @@ router.get("/webhook/config", webhookController.getConfig);
 router.post("/webhook/generate-token", webhookController.generateNewToken);
 router.post("/webhook/token", webhookController.saveToken);
 router.post("/webhook/test-simulate", webhookController.simulateTestReply);
+router.get("/webhook/test-handshake", webhookController.testHandshake);
+router.post("/webhook/tunnel/restart", webhookController.restartTunnel);
 
 router.get("/replies", webhookController.listReplies);
 router.post("/replies/:id/mark-read", webhookController.markAsRead);

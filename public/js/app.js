@@ -2035,6 +2035,36 @@ async function loadWebhookConfig() {
     if (modalToken) modalToken.value = webhookConfig.verifyToken;
     if (metricToken) metricToken.textContent = webhookConfig.verifyToken || "Not Set";
 
+    // Update live tunnel status bar in modal
+    const dot = document.getElementById("tunnelStatusDot");
+    const text = document.getElementById("tunnelStatusText");
+    const badge = document.getElementById("tunnelProviderBadge");
+    const bar = document.getElementById("tunnelStatusBar");
+
+    if (webhookConfig.tunnelConnected) {
+      if (dot) dot.style.background = "#10b981";
+      if (text) {
+        text.textContent = "Tunnel Connected & Active";
+        text.style.color = "#10b981";
+      }
+      if (badge) badge.textContent = webhookConfig.tunnelType || "live";
+      if (bar) {
+        bar.style.background = "rgba(16, 185, 129, 0.1)";
+        bar.style.borderColor = "rgba(16, 185, 129, 0.3)";
+      }
+    } else {
+      if (dot) dot.style.background = "#f59e0b";
+      if (text) {
+        text.textContent = "Tunnel Initializing...";
+        text.style.color = "#f59e0b";
+      }
+      if (badge) badge.textContent = "connecting";
+      if (bar) {
+        bar.style.background = "rgba(245, 158, 11, 0.1)";
+        bar.style.borderColor = "rgba(245, 158, 11, 0.3)";
+      }
+    }
+
     // Update counts
     updateRepliesMetrics(webhookConfig.totalReplies, webhookConfig.unreadReplies, webhookConfig.distinctContacts);
   } catch (err) {
@@ -2365,6 +2395,69 @@ document.getElementById("btnSaveCustomToken")?.addEventListener("click", async (
     }
   } catch (err) {
     showToast(err.message, "error");
+  }
+});
+
+// Test Webhook Handshake with Meta
+document.getElementById("btnTestWebhookHandshake")?.addEventListener("click", async () => {
+  const btn = document.getElementById("btnTestWebhookHandshake");
+  const resultBox = document.getElementById("handshakeResultBox");
+  if (btn) btn.disabled = true;
+  if (resultBox) {
+    resultBox.style.display = "block";
+    resultBox.style.background = "rgba(59, 130, 246, 0.1)";
+    resultBox.style.border = "1px solid rgba(59, 130, 246, 0.3)";
+    resultBox.style.color = "#60a5fa";
+    resultBox.innerHTML = "⏳ Sending handshake request to tunnel endpoint...";
+  }
+
+  try {
+    const res = await fetch("/api/webhook/test-handshake");
+    const result = await res.json();
+    if (result.success) {
+      resultBox.style.background = "rgba(16, 185, 129, 0.12)";
+      resultBox.style.border = "1px solid rgba(16, 185, 129, 0.35)";
+      resultBox.style.color = "#34d399";
+      resultBox.innerHTML = `✅ <strong>Meta Handshake Verified!</strong> Returned HTTP 200 with challenge: <code>${escapeHtml(result.data.challengeResponse)}</code>`;
+      showToast("Webhook handshake verified successfully!", "success");
+    } else {
+      resultBox.style.background = "rgba(239, 68, 68, 0.12)";
+      resultBox.style.border = "1px solid rgba(239, 68, 68, 0.35)";
+      resultBox.style.color = "#f87171";
+      resultBox.innerHTML = `❌ <strong>Verification failed:</strong> ${escapeHtml(result.message)}`;
+      showToast("Handshake verification failed", "error");
+    }
+  } catch (err) {
+    if (resultBox) {
+      resultBox.style.background = "rgba(239, 68, 68, 0.12)";
+      resultBox.style.border = "1px solid rgba(239, 68, 68, 0.35)";
+      resultBox.style.color = "#f87171";
+      resultBox.innerHTML = `❌ <strong>Error:</strong> ${escapeHtml(err.message)}`;
+    }
+    showToast(err.message, "error");
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+});
+
+// Restart Tunnel
+document.getElementById("btnRestartTunnel")?.addEventListener("click", async () => {
+  const btn = document.getElementById("btnRestartTunnel");
+  if (btn) btn.disabled = true;
+  showToast("Restarting tunnel...", "info");
+  try {
+    const res = await fetch("/api/webhook/tunnel/restart", { method: "POST" });
+    const result = await res.json();
+    if (result.success) {
+      showToast("Tunnel reconnected!", "success");
+      await loadWebhookConfig();
+    } else {
+      throw new Error(result.message);
+    }
+  } catch (err) {
+    showToast(`Tunnel restart error: ${err.message}`, "error");
+  } finally {
+    if (btn) btn.disabled = false;
   }
 });
 

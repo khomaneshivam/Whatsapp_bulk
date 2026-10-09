@@ -4,6 +4,7 @@ const path = require("path");
 const config = require("./src/config/env");
 require("./src/config/database"); // Initializes local SQLite DB
 const schedulerService = require("./src/services/schedulerService");
+const tunnelService = require("./src/services/tunnelService");
 const apiRoutes = require("./src/routes/apiRoutes");
 
 const app = express();
@@ -47,6 +48,11 @@ const PORT = config.PORT || 5000;
 const server = app.listen(PORT, () => {
   // Start background campaign scheduler
   schedulerService.initScheduler();
+
+  // Automatically start secure HTTPS tunnel for Meta Webhooks in a single shot
+  tunnelService.initTunnel(PORT).catch(err => {
+    console.warn("[Server] Note: Auto-tunnel initialization error:", err.message);
+  });
 
   console.log(`
 ========================================================================
