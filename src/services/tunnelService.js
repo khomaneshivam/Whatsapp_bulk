@@ -1,4 +1,6 @@
-const { spawn } = require("child_process");
+const { spawn, execSync } = require("child_process");
+const fs = require("fs");
+const path = require("path");
 const { getSetting, setSetting } = require("../config/database");
 const config = require("../config/env");
 
@@ -14,6 +16,28 @@ class TunnelService {
   }
 
   /**
+   * Checks if cloudflared binary is available in PATH or project directory
+   */
+  findCloudflared() {
+    const localBinName = process.platform === "win32" ? "cloudflared.exe" : "cloudflared";
+    const localBinPath = path.resolve(__dirname, "../../", localBinName);
+    if (fs.existsSync(localBinPath)) {
+      return localBinPath;
+    }
+
+    try {
+      const checkCmd = process.platform === "win32" ? "where cloudflared" : "which cloudflared";
+      const out = execSync(checkCmd, { stdio: ["pipe", "pipe", "ignore"] }).toString().trim();
+      if (out) {
+        return out.split(/\r?\n/)[0].trim();
+      }
+    } catch (e) {
+      // not found in PATH
+    }
+    return null;
+  }
+
+  /**
    * Initializes and starts the background tunnel automatically
    */
   async initTunnel(port = 5000) {
@@ -23,20 +47,85 @@ class TunnelService {
     }
 
     this.isStarting = true;
-    console.log(`[TunnelService] Starting automatic secure HTTPS tunnel for port ${this.port}...`);
+    console.log(`[TunnelService] Initializing automatic secure HTTPS tunnel for port ${this.port}...`);
 
+    // Prioritize Cloudflare Tunnel if installed
+    const cfBin = this.findCloudflared();
+    if (cfBin) {
+      const cfStarted = this.startCloudflareTunnel(cfBin);
+      if (cfStarted) {
+        return { success: true, url: this.activeUrl, type: "cloudflared" };
+      }
+    }
+
+    // Fallback to SSH localhost.run
     this.startSshTunnel();
     return { success: true, url: this.activeUrl, type: this.tunnelType };
   }
 
   /**
-   * High-reliability SSH tunnel using localhost.run with keepalive
+   * Starts Cloudflare Tunnel (trycloudflare.com) - Highly stable, no drops
+   */
+  startCloudflareTunnel(binPath) {
+    if (this.activeTunnel) {
+      try { this.activeTunnel.kill(); } catch (e) {}
+      this.activeTunnel = null;
+    }
+
+    try {
+      console.log(`[TunnelService] Starting Cloudflare Tunnel using ${binPath}...`);
+      const cf = spawn(binPath, [
+        "tunnel",
+        "--url", `http://localhost:${this.port}`,
+        "--no-autoupdate"
+      ]);
+
+      this.activeTunnel = cf;
+      this.tunnelType = "cloudflared";
+
+      const urlRegex = /https:\/\/[a-zA-Z0-9-]+\.trycloudflare\.com/;
+
+      const handleData = (data) => {
+        const text = data.toString();
+        const match = text.match(urlRegex);
+        if (match && (!this.activeUrl || this.activeUrl !== match[0])) {
+          this.activeUrl = match[0];
+          this.isStarting = false;
+          this.reconnectAttempts = 0;
+          setSetting("PUBLIC_WEBHOOK_URL", this.activeUrl);
+          this.logTunnelSuccess(this.activeUrl, "Cloudflare Tunnel (trycloudflare.com)");
+        }
+      };
+
+      cf.stdout.on("data", handleData);
+      cf.stderr.on("data", handleData);
+
+      cf.on("close", (code) => {
+        console.warn(`[TunnelService] Cloudflare tunnel closed (code ${code}). Reconnecting in 5s...`);
+        this.activeUrl = null;
+        this.activeTunnel = null;
+        clearTimeout(this.retryTimer);
+        this.retryTimer = setTimeout(() => this.initTunnel(this.port), 5000);
+      });
+
+      cf.on("error", (err) => {
+        console.error("[TunnelService] Cloudflare tunnel spawn error:", err.message);
+        this.startSshTunnel();
+      });
+
+      return true;
+    } catch (err) {
+      console.warn("[TunnelService] Failed to start Cloudflare tunnel, falling back to SSH:", err.message);
+      return false;
+    }
+  }
+
+  /**
+   * Fallback SSH tunnel using localhost.run with keepalive
    */
   startSshTunnel() {
     if (this.activeTunnel) {
-      try {
-        this.activeTunnel.kill();
-      } catch (e) {}
+      try { this.activeTunnel.kill(); } catch (e) {}
       this.activeTunnel = null;
     }
 
@@ -61,7 +150,7 @@ class TunnelService {
           this.isStarting = false;
           this.reconnectAttempts = 0;
           setSetting("PUBLIC_WEBHOOK_URL", this.activeUrl);
-          this.logTunnelSuccess(this.activeUrl);
+          this.logTunnelSuccess(this.activeUrl, "localhost.run (SSH)");
         }
       });
 
@@ -94,11 +183,11 @@ class TunnelService {
   /**
    * Logs a clear, high-visibility summary of the live tunnel configuration
    */
-  logTunnelSuccess(url) {
+  logTunnelSuccess(url, provider = "localhost.run") {
     const token = getSetting("WEBHOOK_VERIFY_TOKEN") || config.WEBHOOK_VERIFY_TOKEN;
     console.log(`
 ========================================================================
-🎉 LIVE META WHATSAPP WEBHOOK TUNNEL ESTABLISHED!
+🎉 LIVE META WHATSAPP WEBHOOK TUNNEL ESTABLISHED! (${provider})
 ========================================================================
 👉 Callback URL:  ${url}/webhook
 👉 Verify Token:  ${token}
@@ -122,7 +211,7 @@ class TunnelService {
       connected: Boolean(activeUrl),
       url: activeUrl,
       webhookUrl: activeUrl ? `${activeUrl}/webhook` : null,
-      type: this.tunnelType || "localhost.run"
+      type: this.tunnelType
     };
   }
 
@@ -132,9 +221,13 @@ class TunnelService {
   async restart() {
     this.activeUrl = null;
     clearTimeout(this.retryTimer);
-    this.startSshTunnel();
+    const cfBin = this.findCloudflared();
+    if (cfBin) {
+      this.startCloudflareTunnel(cfBin);
+    } else {
+      this.startSshTunnel();
+    }
 
-    // Wait up to 6 seconds for new URL
     return new Promise((resolve) => {
       let waited = 0;
       const interval = setInterval(() => {
