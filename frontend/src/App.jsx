@@ -10,12 +10,15 @@ import InboxPage from './pages/InboxPage';
 import ReportsPage from './pages/ReportsPage';
 import AdminPage from './pages/AdminPage';
 import SettingsPage from './pages/SettingsPage';
+import LoginPage from './pages/LoginPage';
+import RegisterPage from './pages/RegisterPage';
 import { Smartphone } from 'lucide-react';
 
 function AppContent() {
-  const { loading, isAdmin } = useAuth();
+  const { isAuthenticated, loading, isAdmin } = useAuth();
   const [activeTab, setActiveTab] = useState('dashboard');
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [authView, setAuthView] = useState('login'); // 'login' or 'register'
 
   if (loading) {
     return (
@@ -48,6 +51,14 @@ function AppContent() {
       </div>
     );
   }
+
+  if (!isAuthenticated) {
+    if (authView === 'register') {
+      return <RegisterPage onSwitchToLogin={() => setAuthView('login')} />;
+    }
+    return <LoginPage onSwitchToRegister={() => setAuthView('register')} />;
+  }
+
 
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', background: 'var(--bg-primary)' }}>

@@ -10,11 +10,12 @@ import {
   Settings, 
   Smartphone,
   ChevronRight,
-  UserCheck
+  UserCheck,
+  LogOut
 } from 'lucide-react';
 
 export default function Sidebar({ activeTab, setActiveTab, mobileOpen, setMobileOpen }) {
-  const { user, isAdmin } = useAuth();
+  const { user, isAdmin, logout } = useAuth();
 
   const navItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -239,25 +240,55 @@ export default function Sidebar({ activeTab, setActiveTab, mobileOpen, setMobile
             </div>
           </div>
 
-          <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '5px',
-            background: '#DCFCE7',
-            padding: '4px 8px',
-            borderRadius: '999px',
-            border: '1px solid #BBF7D0'
-          }}>
-            <span style={{
-              width: '6px',
-              height: '6px',
-              borderRadius: '50%',
-              background: '#16A34A',
-              boxShadow: '0 0 5px rgba(22, 163, 74, 0.6)'
-            }} />
-            <span style={{ fontSize: '0.68rem', fontWeight: 700, color: '#15803D' }}>
-              Active
-            </span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '5px',
+              background: '#DCFCE7',
+              padding: '4px 8px',
+              borderRadius: '999px',
+              border: '1px solid #BBF7D0'
+            }}>
+              <span style={{
+                width: '6px',
+                height: '6px',
+                borderRadius: '50%',
+                background: '#16A34A',
+                boxShadow: '0 0 5px rgba(22, 163, 74, 0.6)'
+              }} />
+              <span style={{ fontSize: '0.68rem', fontWeight: 700, color: '#15803D' }}>
+                Active
+              </span>
+            </div>
+
+            <button
+              type="button"
+              onClick={logout}
+              title="Sign Out of KonkanTrip"
+              style={{
+                background: 'transparent',
+                border: 'none',
+                color: '#94A3B8',
+                cursor: 'pointer',
+                padding: '6px',
+                borderRadius: '6px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                transition: 'all 0.15s ease'
+              }}
+              onMouseOver={e => {
+                e.currentTarget.style.color = '#EF4444';
+                e.currentTarget.style.background = '#FEE2E2';
+              }}
+              onMouseOut={e => {
+                e.currentTarget.style.color = '#94A3B8';
+                e.currentTarget.style.background = 'transparent';
+              }}
+            >
+              <LogOut size={16} />
+            </button>
           </div>
         </div>
       </aside>

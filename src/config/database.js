@@ -307,6 +307,20 @@ function initializeDatabase() {
     console.warn("[DB Seed] templates seed check:", tplSeedErr.message);
   }
 
+  // Seed default admin user if users table is empty
+  try {
+    const userCount = db.prepare("SELECT COUNT(*) as count FROM users").get()?.count || 0;
+    if (userCount === 0) {
+      const defaultHash = bcrypt.hashSync("admin123", 10);
+      db.prepare(`
+        INSERT INTO users (id, name, email, phone, password_hash, role, status)
+        VALUES ('admin_root', 'Shivam Khomane', 'khomaneshivam@gmail.com', '9307382030', ?, 'ADMIN', 'ACTIVE')
+      `).run(defaultHash);
+    }
+  } catch (userSeedErr) {
+    console.warn("[DB Seed] user seed check:", userSeedErr.message);
+  }
+
   // Seed default settings if not exists
   const getSetting = db.prepare("SELECT value FROM settings WHERE key = ?");
   const setSetting = db.prepare("INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)");

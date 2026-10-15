@@ -3,39 +3,50 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
-  const [token, setToken] = useState(() => localStorage.getItem('token') || 'system_master_token');
+  const [token, setToken] = useState(() => localStorage.getItem('token') || null);
   const [user, setUser] = useState(() => {
     try {
       const saved = localStorage.getItem('user');
       if (saved) return JSON.parse(saved);
     } catch (e) {}
-    return {
-      id: 'admin_root',
-      name: 'Shivam Khomane',
-      email: 'khomaneshivam@gmail.com',
-      role: 'ADMIN',
-      status: 'ACTIVE'
-    };
+    return null;
   });
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(Boolean(localStorage.getItem('token')));
   const [originalAdminToken, setOriginalAdminToken] = useState(() => localStorage.getItem('orig_admin_token') || null);
 
   const isImpersonating = Boolean(originalAdminToken);
 
   useEffect(() => {
-    verifyAndFetchUser();
+    const savedToken = localStorage.getItem('token');
+    if (savedToken) {
+      verifyAndFetchUser(savedToken);
+    } else {
+      setLoading(false);
+    }
   }, []);
 
-  async function verifyAndFetchUser() {
+  async function verifyAndFetchUser(tok = token) {
+    if (!tok) {
+      setLoading(false);
+      return;
+    }
     try {
-      const res = await fetch('/api/auth/me');
+      const res = await fetch('/api/auth/me', {
+        headers: {
+          'Authorization': `Bearer ${tok}`
+        }
+      });
       const data = await res.json();
       if (data.success && data.user) {
         setUser(data.user);
         localStorage.setItem('user', JSON.stringify(data.user));
+      } else {
+        logout();
       }
     } catch (err) {
-      // Keep default admin user
+      if (!user) logout();
+    } finally {
+      setLoading(false);
     }
   }
 
