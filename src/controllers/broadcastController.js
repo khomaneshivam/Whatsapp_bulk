@@ -191,15 +191,39 @@ async function createCampaign(req, res) {
 }
 
 /**
- * Starts broadcasting a campaign
+ * Starts broadcasting a campaign (optionally updating dispatch throttle delay)
  */
 async function startCampaign(req, res) {
   try {
     const { campaignId } = req.params;
-    const result = await broadcastEngine.startCampaign(campaignId);
+    const { delayMs, throttleDelay } = req.body || {};
+    const delay = delayMs !== undefined ? delayMs : throttleDelay;
+    const result = await broadcastEngine.startCampaign(campaignId, delay);
     return res.status(200).json({ success: true, ...result });
   } catch (error) {
     console.error("Start campaign error:", error);
+    return res.status(400).json({ success: false, message: error.message });
+  }
+}
+
+/**
+ * Updates the dispatch throttle delay for a campaign
+ */
+async function updateThrottleDelay(req, res) {
+  try {
+    const { campaignId } = req.params;
+    const { delayMs, throttleDelay } = req.body || {};
+    const delay = delayMs !== undefined ? delayMs : throttleDelay;
+    if (delay === undefined || delay === null) {
+      return res.status(400).json({ success: false, message: "Throttle delay (delayMs) is required." });
+    }
+    const result = broadcastEngine.setCampaignDelay(campaignId, delay);
+    return res.status(200).json({
+      success: true,
+      message: `Dispatch throttle delay updated to ${result.delayMs}ms.`,
+      delayMs: result.delayMs
+    });
+  } catch (error) {
     return res.status(400).json({ success: false, message: error.message });
   }
 }
@@ -218,12 +242,14 @@ async function pauseCampaign(req, res) {
 }
 
 /**
- * Resumes a paused campaign
+ * Resumes a paused campaign (optionally updating dispatch throttle delay)
  */
 async function resumeCampaign(req, res) {
   try {
     const { campaignId } = req.params;
-    const result = await broadcastEngine.resumeCampaign(campaignId);
+    const { delayMs, throttleDelay } = req.body || {};
+    const delay = delayMs !== undefined ? delayMs : throttleDelay;
+    const result = await broadcastEngine.resumeCampaign(campaignId, delay);
     return res.status(200).json({ success: true, ...result });
   } catch (error) {
     return res.status(400).json({ success: false, message: error.message });
@@ -365,6 +391,7 @@ async function runScheduledNow(req, res) {
 module.exports = {
   createCampaign,
   startCampaign,
+  updateThrottleDelay,
   pauseCampaign,
   resumeCampaign,
   cancelCampaign,

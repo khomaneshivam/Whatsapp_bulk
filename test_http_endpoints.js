@@ -14,8 +14,8 @@ async function runHttpTests() {
   if (!indexRes.ok) throw new Error(`GET / failed with status ${indexRes.status}`);
   const html = await indexRes.text();
   console.log(`✓ Dashboard HTML loaded (${html.length} bytes)`);
-  if (!html.includes("btnDispatchSchedule") || !html.includes("btnFetchTemplate")) {
-    throw new Error("HTML missing schedule or template inspect elements");
+  if (!html.includes("root") && !html.includes("KonkanTrip")) {
+    throw new Error("HTML missing React root or KonkanTrip title");
   }
 
   // Test 2: Inspect Template by ID via REST API

@@ -6,6 +6,29 @@ const { getTemplateDetails } = require("../services/metaWhatsAppService");
  */
 function formatTemplateRow(row) {
   if (!row) return null;
+  const components = row.components ? JSON.parse(row.components) : [];
+  const bodyText = row.body_text || "";
+  if (components.length === 0 && bodyText) {
+    components.push({
+      type: "BODY",
+      text: bodyText
+    });
+  }
+
+  let variables = row.variables ? JSON.parse(row.variables) : [];
+  if (variables.length === 0 && bodyText) {
+    const matches = [...bodyText.matchAll(/\{\{([a-zA-Z0-9_]+)\}\}/g)];
+    const uniqueKeys = [...new Set(matches.map(m => m[1]))];
+    variables = uniqueKeys.map((key, i) => ({
+      type: /^\d+$/.test(key) ? "positional" : "named",
+      index: i + 1,
+      key,
+      label: `{{${key}}}`,
+      name: key,
+      example: ""
+    }));
+  }
+
   return {
     id: row.id,
     name: row.name,
@@ -14,9 +37,9 @@ function formatTemplateRow(row) {
     category: row.category || "MARKETING",
     status: row.status || "APPROVED",
     parameter_format: row.parameter_format || "POSITIONAL",
-    bodyText: row.body_text || "",
-    variables: row.variables ? JSON.parse(row.variables) : [],
-    components: row.components ? JSON.parse(row.components) : [],
+    bodyText: bodyText,
+    variables: variables,
+    components: components,
     buttons: row.buttons ? JSON.parse(row.buttons) : [],
     createdAt: row.created_at,
     updatedAt: row.updated_at
@@ -40,7 +63,8 @@ async function listTemplates(req, res) {
     const templates = rows.map(formatTemplateRow);
     return res.status(200).json({
       success: true,
-      data: templates
+      data: templates,
+      templates: templates
     });
   } catch (error) {
     console.error("List templates error:", error);
@@ -134,7 +158,8 @@ async function addTemplate(req, res) {
     return res.status(201).json({
       success: true,
       message: `Template '${finalName}' added to system successfully!`,
-      data: formatted
+      data: formatted,
+      template: formatted
     });
   } catch (error) {
     console.error("Add template error:", error);
@@ -158,9 +183,11 @@ async function getTemplate(req, res) {
     `).get(clean, clean, clean);
 
     if (row) {
+      const formatted = formatTemplateRow(row);
       return res.status(200).json({
         success: true,
-        data: formatTemplateRow(row)
+        data: formatted,
+        template: formatted
       });
     }
 
@@ -199,7 +226,8 @@ async function getTemplate(req, res) {
 
     return res.status(200).json({
       success: true,
-      data: details
+      data: details,
+      template: details
     });
   } catch (error) {
     console.error("Get template error:", error);

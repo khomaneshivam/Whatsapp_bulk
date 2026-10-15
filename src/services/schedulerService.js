@@ -1,9 +1,11 @@
 const { db } = require("../config/database");
 const broadcastEngine = require("./broadcastEngine");
+const bookingAutomationService = require("./bookingAutomationService");
 
 class SchedulerService {
   constructor() {
     this.intervalTimer = null;
+    this.bookingIntervalTimer = null;
     this.checkIntervalMs = 5000; // Check every 5 seconds
     this.isChecking = false;
   }
@@ -14,6 +16,9 @@ class SchedulerService {
   initScheduler() {
     if (this.intervalTimer) {
       clearInterval(this.intervalTimer);
+    }
+    if (this.bookingIntervalTimer) {
+      clearInterval(this.bookingIntervalTimer);
     }
 
     console.log("[Scheduler] Background campaign scheduler started (polling every 5s)");
@@ -32,6 +37,27 @@ class SchedulerService {
     if (this.intervalTimer.unref) {
       this.intervalTimer.unref();
     }
+
+    // Initialize and sync Evergreen Booking Lifecycle Campaign
+    try {
+      bookingAutomationService.syncEvergreenCampaign();
+    } catch (e) {
+      console.warn("[Scheduler] Initial evergreen campaign sync notice:", e.message);
+    }
+
+    // Initial run for Booking Lifecycle triggers after startup delay (2.5s)
+    setTimeout(() => {
+      bookingAutomationService.runTriggers().catch(err => {
+        console.warn("[Scheduler] Initial booking triggers check notice:", err.message);
+      });
+    }, 2500);
+
+    // Background runner for Google Sheet & Saved Booking Automation (evaluates 4-stage lifecycle times every 30s)
+    this.bookingIntervalTimer = setInterval(() => {
+      bookingAutomationService.runTriggers().catch(err => {
+        console.warn("[Scheduler] Background booking triggers check notice:", err.message);
+      });
+    }, 30 * 1000);
   }
 
   /**
@@ -179,6 +205,10 @@ class SchedulerService {
     if (this.intervalTimer) {
       clearInterval(this.intervalTimer);
       this.intervalTimer = null;
+    }
+    if (this.bookingIntervalTimer) {
+      clearInterval(this.bookingIntervalTimer);
+      this.bookingIntervalTimer = null;
     }
   }
 }

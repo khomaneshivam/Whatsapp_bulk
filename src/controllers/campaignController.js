@@ -64,6 +64,16 @@ async function getCampaignDetails(req, res) {
 async function deleteCampaign(req, res) {
   try {
     const { campaignId } = req.params;
+
+    if (campaignId === "campaign_booking_lifecycle") {
+      db.prepare("DELETE FROM campaign_recipients WHERE campaign_id = ?").run(campaignId);
+      db.prepare("UPDATE campaigns SET sent_count = 0, failed_count = 0, status = 'PAUSED' WHERE id = ?").run(campaignId);
+      return res.status(200).json({
+        success: true,
+        message: "Booking Automation campaign metrics reset and status set to PAUSED."
+      });
+    }
+
     db.prepare("DELETE FROM campaign_recipients WHERE campaign_id = ?").run(campaignId);
     db.prepare("DELETE FROM campaigns WHERE id = ?").run(campaignId);
 

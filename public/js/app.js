@@ -81,6 +81,8 @@ document.querySelectorAll(".nav-tab").forEach(tab => {
     } else if (targetId === "tab-replies") {
       loadCustomerReplies();
       loadAutoReplySettings();
+    } else if (targetId === "tab-automation") {
+      loadAutomationDashboard();
     }
   });
 });
@@ -530,21 +532,147 @@ function insertVariableTag(tag) {
 // Saved System Templates State & Management
 let savedSystemTemplates = [];
 let verifiedTemplateData = null;
+let currentAutomationConfig = {
+  preCheckinTemplate: "kt_best_route_to_property",
+  checkoutTemplate: "kt_checkout_belongings_reminder",
+  stages: {
+    beforeCheckin: { enabled: true, offsetDays: 1, dispatchTime: "10:00", templateName: "kt_best_route_to_property" },
+    onCheckin: { enabled: false, offsetDays: 0, dispatchTime: "12:00", templateName: "kt_invitation_" },
+    onCheckout: { enabled: true, offsetDays: 0, dispatchTime: "09:00", templateName: "kt_checkout_belongings_reminder" },
+    afterCheckout: { enabled: false, offsetDays: 1, dispatchTime: "18:00", templateName: "kt_restaurant_invitation" }
+  }
+};
 
 async function loadSystemTemplates(selectedIdOrName = null) {
-  const container = document.getElementById("savedTemplatesListContainer");
-  if (!container) return;
-
   try {
     const res = await fetch("/api/templates");
     const data = await res.json();
     if (data.success && Array.isArray(data.data)) {
       savedSystemTemplates = data.data;
       renderSystemTemplatePills(selectedIdOrName);
+      renderBroadcastTemplateDropdown(selectedIdOrName);
+      renderAutomationTemplateDropdowns();
     }
   } catch (err) {
     console.warn("Failed to load saved system templates:", err.message);
   }
+}
+
+function renderBroadcastTemplateDropdown(selectedIdOrName = null) {
+  const selectElem = document.getElementById("selectSavedBroadcastTemplate");
+  if (!selectElem) return;
+
+  const currentTplVal = (selectedIdOrName || document.getElementById("inputTemplateName")?.value || "kt_invitation_").trim().toLowerCase();
+
+  selectElem.innerHTML = `<option value="">-- Choose from Stored Templates in Database (${savedSystemTemplates.length} Available) --</option>`;
+
+  savedSystemTemplates.forEach(tpl => {
+    const isSelected = (tpl.name && tpl.name.toLowerCase() === currentTplVal) ||
+                       (tpl.id && String(tpl.id).toLowerCase() === currentTplVal) ||
+                       (tpl.meta_id && String(tpl.meta_id).toLowerCase() === currentTplVal);
+
+    const opt = document.createElement("option");
+    opt.value = tpl.name;
+    const varCount = tpl.variables?.length || 0;
+    const catLabel = tpl.category || "APPROVED";
+    opt.textContent = `${tpl.name} (Meta ID: ${tpl.meta_id || tpl.id}) • ${catLabel} [${varCount} Vars]`;
+    if (isSelected) opt.selected = true;
+    selectElem.appendChild(opt);
+  });
+}
+
+function renderAutomationTemplateDropdowns() {
+  const stageDefs = [
+    {
+      selectId: "autoStageBeforeCheckinTemplate",
+      hintId: "autoStageBeforeCheckinHint",
+      defaultVal: currentAutomationConfig.stages?.beforeCheckin?.templateName || currentAutomationConfig.preCheckinTemplate || "kt_best_route_to_property",
+      fallbackLabel: "🚗 Route & Directions"
+    },
+    {
+      selectId: "autoStageOnCheckinTemplate",
+      hintId: "autoStageOnCheckinHint",
+      defaultVal: currentAutomationConfig.stages?.onCheckin?.templateName || "kt_invitation_",
+      fallbackLabel: "🏨 Welcome & Wi-Fi"
+    },
+    {
+      selectId: "autoStageOnCheckoutTemplate",
+      hintId: "autoStageOnCheckoutHint",
+      defaultVal: currentAutomationConfig.stages?.onCheckout?.templateName || currentAutomationConfig.checkoutTemplate || "kt_checkout_belongings_reminder",
+      fallbackLabel: "🧳 Luggage Reminder"
+    },
+    {
+      selectId: "autoStageAfterCheckoutTemplate",
+      hintId: "autoStageAfterCheckoutHint",
+      defaultVal: currentAutomationConfig.stages?.afterCheckout?.templateName || "kt_restaurant_invitation",
+      fallbackLabel: "⭐ Feedback & Review"
+    },
+    // Backward compatibility for legacy elements if present
+    {
+      selectId: "autoPreCheckinTemplate",
+      hintId: "autoPreCheckinTemplateHint",
+      defaultVal: currentAutomationConfig.preCheckinTemplate || "kt_best_route_to_property",
+      fallbackLabel: "🚗 Pre-Checkin"
+    },
+    {
+      selectId: "autoCheckoutTemplate",
+      hintId: "autoCheckoutTemplateHint",
+      defaultVal: currentAutomationConfig.checkoutTemplate || "kt_checkout_belongings_reminder",
+      fallbackLabel: "🧳 Checkout"
+    }
+  ];
+
+  stageDefs.forEach(({ selectId, defaultVal }) => {
+    const sel = document.getElementById(selectId);
+    if (!sel) return;
+
+    const activeVal = (sel.value || defaultVal || "").toLowerCase().trim();
+    sel.innerHTML = "";
+
+    if (savedSystemTemplates.length === 0) {
+      sel.innerHTML = `<option value="">No templates in database</option>`;
+      return;
+    }
+
+    savedSystemTemplates.forEach(tpl => {
+      const opt = document.createElement("option");
+      opt.value = tpl.name;
+      const varCount = tpl.variables?.length || 0;
+      opt.textContent = `${tpl.name} [${varCount} Vars]`;
+      if (tpl.name.toLowerCase() === activeVal || (tpl.meta_id && String(tpl.meta_id).toLowerCase() === activeVal)) {
+        opt.selected = true;
+      }
+      sel.appendChild(opt);
+    });
+  });
+
+  updateAutomationTemplateHints();
+}
+
+function updateAutomationTemplateHints() {
+  const hintPairs = [
+    { selectId: "autoStageBeforeCheckinTemplate", hintId: "autoStageBeforeCheckinHint" },
+    { selectId: "autoStageOnCheckinTemplate", hintId: "autoStageOnCheckinHint" },
+    { selectId: "autoStageOnCheckoutTemplate", hintId: "autoStageOnCheckoutHint" },
+    { selectId: "autoStageAfterCheckoutTemplate", hintId: "autoStageAfterCheckoutHint" },
+    { selectId: "autoPreCheckinTemplate", hintId: "autoPreCheckinTemplateHint" },
+    { selectId: "autoCheckoutTemplate", hintId: "autoCheckoutTemplateHint" }
+  ];
+
+  hintPairs.forEach(({ selectId, hintId }) => {
+    const sel = document.getElementById(selectId);
+    const hint = document.getElementById(hintId);
+    if (!sel || !hint) return;
+
+    const tplName = (sel.value || "").toLowerCase().trim();
+    const tpl = savedSystemTemplates.find(t => t.name.toLowerCase() === tplName);
+
+    if (tpl && tpl.variables && tpl.variables.length > 0) {
+      hint.innerHTML = `Vars: ${tpl.variables.map(v => `<code>${v.label}</code> (${v.example || v.name || v.key})`).join(", ")}`;
+    } else {
+      hint.innerHTML = `Auto-passes: <code>{{1}}</code> Guest Name, <code>{{2}}</code> Property Name`;
+    }
+  });
 }
 
 function renderSystemTemplatePills(selectedIdOrName = null) {
@@ -678,6 +806,17 @@ function selectSystemTemplate(tpl, updateInput = true) {
 
   // Update phone mockup
   updatePhoneMockup();
+
+  // Update broadcast select dropdown if matched
+  const broadcastSelect = document.getElementById("selectSavedBroadcastTemplate");
+  if (broadcastSelect) {
+    for (let i = 0; i < broadcastSelect.options.length; i++) {
+      if (broadcastSelect.options[i].value.toLowerCase() === tpl.name.toLowerCase()) {
+        broadcastSelect.selectedIndex = i;
+        break;
+      }
+    }
+  }
 
   // Re-highlight active pill
   document.querySelectorAll("#savedTemplatesListContainer .template-pill").forEach(p => {
@@ -890,6 +1029,73 @@ document.getElementById("btnFetchTemplate")?.addEventListener("click", () => {
   }
   fetchTemplateDetails(tplInput, true);
 });
+
+// Select Stored Template from Database Dropdown
+const selectSavedBroadcastTemplate = document.getElementById("selectSavedBroadcastTemplate");
+if (selectSavedBroadcastTemplate) {
+  selectSavedBroadcastTemplate.addEventListener("change", (e) => {
+    const chosenName = e.target.value;
+    if (!chosenName) return;
+    const matched = savedSystemTemplates.find(t => 
+      t.name.toLowerCase() === chosenName.toLowerCase() ||
+      String(t.id).toLowerCase() === chosenName.toLowerCase() ||
+      String(t.meta_id).toLowerCase() === chosenName.toLowerCase()
+    );
+    if (matched) {
+      selectSystemTemplate(matched);
+      showToast(`Selected stored template: ${matched.name}`, "info");
+    }
+  });
+}
+
+// Save Current Template to DB Button
+const btnSaveCurrentTemplateToDb = document.getElementById("btnSaveCurrentTemplateToDb");
+if (btnSaveCurrentTemplateToDb) {
+  btnSaveCurrentTemplateToDb.addEventListener("click", async () => {
+    const rawVal = document.getElementById("inputTemplateName")?.value?.trim();
+    if (!rawVal) {
+      showToast("Please enter a template number, ID, or name to store.", "warning");
+      return;
+    }
+
+    btnSaveCurrentTemplateToDb.disabled = true;
+    btnSaveCurrentTemplateToDb.textContent = "Saving to DB...";
+
+    try {
+      const payload = {
+        templateIdOrName: rawVal,
+        language: document.getElementById("inputTemplateLang")?.value || "en"
+      };
+
+      if (currentTemplateDetails) {
+        payload.name = currentTemplateDetails.name;
+        payload.category = currentTemplateDetails.category;
+        payload.parameter_format = currentTemplateDetails.parameter_format;
+        payload.bodyText = currentTemplateDetails.bodyText;
+        payload.variables = currentTemplateDetails.variables;
+      }
+
+      const res = await fetch("/api/templates", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+
+      const data = await res.json();
+      if (data.success) {
+        showToast(`✓ Template '${data.data?.name || rawVal}' stored in database!`, "success");
+        await loadSystemTemplates(data.data?.name || rawVal);
+      } else {
+        throw new Error(data.message || "Failed to store template");
+      }
+    } catch (err) {
+      showToast(err.message, "error");
+    } finally {
+      btnSaveCurrentTemplateToDb.disabled = false;
+      btnSaveCurrentTemplateToDb.textContent = "💾 Save to DB";
+    }
+  });
+}
 
 // Auto-Map from Excel button
 document.getElementById("btnAutoMapParams")?.addEventListener("click", () => {
@@ -1917,6 +2123,9 @@ btnOpenSettings.addEventListener("click", async () => {
       if (document.getElementById("settingTemplateName")) {
         document.getElementById("settingTemplateName").value = data.data.DEFAULT_TEMPLATE_NAME || "kt_invitation_";
       }
+      if (document.getElementById("settingAppTimezone")) {
+        document.getElementById("settingAppTimezone").value = data.data.APP_TIMEZONE || "Asia/Kolkata";
+      }
     }
   } catch (e) {
     console.error("Failed to load settings:", e);
@@ -1987,7 +2196,8 @@ btnSaveSettings.addEventListener("click", async () => {
     DEFAULT_COUNTRY_CODE: document.getElementById("settingCountryCode").value.trim(),
     BROADCAST_DELAY_MS: document.getElementById("settingDelay").value.trim(),
     WHATSAPP_TEMPLATE_ID: (document.getElementById("settingTemplateId")?.value || "1059862786867912").trim(),
-    DEFAULT_TEMPLATE_NAME: (document.getElementById("settingTemplateName")?.value || "kt_invitation_").trim()
+    DEFAULT_TEMPLATE_NAME: (document.getElementById("settingTemplateName")?.value || "kt_invitation_").trim(),
+    APP_TIMEZONE: (document.getElementById("settingAppTimezone")?.value || "Asia/Kolkata").trim()
   };
 
   try {
@@ -2002,6 +2212,7 @@ btnSaveSettings.addEventListener("click", async () => {
       showToast("Settings updated successfully!", "success");
       settingsModal.classList.remove("active");
       checkMetaStatus();
+      syncSystemTime();
     } else {
       throw new Error(data.message);
     }
@@ -2013,6 +2224,99 @@ btnSaveSettings.addEventListener("click", async () => {
 metaStatusPill.addEventListener("click", () => {
   btnOpenSettings.click();
 });
+
+// =========================================================================
+// SYSTEM DATE & TIME SYNCHRONIZATION (DEPLOYMENTS + LOCAL)
+// =========================================================================
+
+let serverTimeSkewMs = 0;
+let serverTimezone = "Asia/Kolkata";
+let serverTimeData = null;
+let systemClockInterval = null;
+
+async function syncSystemTime() {
+  try {
+    const startFetch = Date.now();
+    const res = await fetch("/api/system/time");
+    const json = await res.json();
+    const endFetch = Date.now();
+    const latency = Math.round((endFetch - startFetch) / 2);
+
+    if (json.success && json.data) {
+      serverTimeData = json.data;
+      serverTimezone = json.data.timezone || "Asia/Kolkata";
+      serverTimeSkewMs = (json.data.timestamp + latency) - Date.now();
+
+      updateSystemClockDisplay();
+
+      // Update badge
+      const tzBadge = document.getElementById("systemTzBadge");
+      if (tzBadge) {
+        let tzAbbr = "IST";
+        if (serverTimezone.includes("Kolkata")) tzAbbr = "IST";
+        else if (serverTimezone === "UTC") tzAbbr = "UTC";
+        else if (serverTimezone.includes("New_York")) tzAbbr = "EST";
+        else if (serverTimezone.includes("London")) tzAbbr = "GMT";
+        else if (serverTimezone.includes("Dubai")) tzAbbr = "GST";
+        else tzAbbr = json.data.utcOffset || "TZ";
+
+        tzBadge.textContent = tzAbbr;
+        tzBadge.title = `Server Timezone: ${serverTimezone} (${json.data.utcOffset || "UTC"})`;
+      }
+
+      // Update pill tooltip
+      const pill = document.getElementById("systemTimePill");
+      if (pill) {
+        const hostStatus = json.data.isHostUtc ? "Cloud Deployment (UTC Host)" : "Local Host Environment";
+        pill.title = `System Time: ${json.data.formatted}\nTimezone: ${serverTimezone} (${json.data.utcOffset || "UTC"})\nHost: ${hostStatus}\nClick to view/change timezone`;
+      }
+
+      // Update automation system date if present
+      const mSysDate = document.getElementById("metricAutoSystemToday");
+      if (mSysDate && json.data.date) {
+        mSysDate.textContent = json.data.date;
+      }
+    }
+  } catch (err) {
+    console.warn("Failed to sync system time:", err);
+  }
+}
+
+function updateSystemClockDisplay() {
+  const timeElem = document.getElementById("systemTimeText");
+  if (!timeElem) return;
+
+  const currentServerTime = new Date(Date.now() + serverTimeSkewMs);
+  try {
+    const timeFormatter = new Intl.DateTimeFormat("en-IN", {
+      timeZone: serverTimezone,
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: true
+    });
+    timeElem.textContent = timeFormatter.format(currentServerTime);
+  } catch (e) {
+    timeElem.textContent = currentServerTime.toLocaleTimeString();
+  }
+}
+
+function initSystemTimeSync() {
+  syncSystemTime();
+  if (systemClockInterval) clearInterval(systemClockInterval);
+  systemClockInterval = setInterval(updateSystemClockDisplay, 1000);
+  setInterval(syncSystemTime, 30000);
+
+  const pill = document.getElementById("systemTimePill");
+  if (pill) {
+    pill.style.cursor = "pointer";
+    pill.addEventListener("click", () => {
+      btnOpenSettings.click();
+      const tzSelect = document.getElementById("settingAppTimezone");
+      if (tzSelect) tzSelect.focus();
+    });
+  }
+}
 
 // =========================================================================
 // CUSTOMER REPLIES & META WEBHOOK MANAGEMENT
@@ -2729,13 +3033,543 @@ if (btnSaveAutoReplySettings) {
   });
 }
 
+// =========================================================================
+// GOOGLE SHEETS BOOKING AUTOMATION LOGIC
+// =========================================================================
+
+const btnPreviewSheet = document.getElementById("btnPreviewSheet");
+const btnRunAutomationNow = document.getElementById("btnRunAutomationNow");
+const btnSaveAutomationConfig = document.getElementById("btnSaveAutomationConfig");
+const btnPasteSheetUrl = document.getElementById("btnPasteSheetUrl");
+const btnRefreshAutoHistory = document.getElementById("btnRefreshAutoHistory");
+const autoSheetUrlInput = document.getElementById("autoSheetUrl");
+const autoPropertyNameInput = document.getElementById("autoPropertyName");
+const autoEnabledToggle = document.getElementById("autoEnabledToggle");
+const autoEnabledLabel = document.getElementById("autoEnabledLabel");
+
+if (autoEnabledToggle && autoEnabledLabel) {
+  autoEnabledToggle.addEventListener("change", () => {
+    autoEnabledLabel.textContent = autoEnabledToggle.checked ? "Active (Every 1 min scan)" : "Paused (Manual Only)";
+  });
+}
+
+if (btnPasteSheetUrl && autoSheetUrlInput) {
+  btnPasteSheetUrl.addEventListener("click", async () => {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (text && text.includes("docs.google.com")) {
+        autoSheetUrlInput.value = text.trim();
+        showToast("Google Sheet URL pasted from clipboard!", "info");
+        inspectGoogleSheet(true);
+      } else if (text) {
+        autoSheetUrlInput.value = text.trim();
+        showToast("Pasted clipboard text.", "info");
+      }
+    } catch (e) {
+      showToast("Clipboard permission required. Please paste manually into the input box.", "warning");
+    }
+  });
+}
+
+function getActiveStagesFromUI() {
+  return {
+    beforeCheckin: {
+      id: "beforeCheckin",
+      title: "Before Check-in (Route & Directions)",
+      triggerType: "BEFORE_CHECKIN",
+      enabled: Boolean(document.getElementById("autoStageBeforeCheckinEnabled")?.checked),
+      offsetDays: parseInt(document.getElementById("autoStageBeforeCheckinOffset")?.value || "1", 10),
+      dispatchTime: document.getElementById("autoStageBeforeCheckinTime")?.value || "10:00",
+      templateName: document.getElementById("autoStageBeforeCheckinTemplate")?.value || currentAutomationConfig.stages?.beforeCheckin?.templateName || "kt_best_route_to_property",
+      badgeLabel: "🚗 Pre-Arrival",
+      color: "#25d366"
+    },
+    onCheckin: {
+      id: "onCheckin",
+      title: "On Check-in Day (Welcome & Wi-Fi)",
+      triggerType: "ON_CHECKIN",
+      enabled: Boolean(document.getElementById("autoStageOnCheckinEnabled")?.checked),
+      offsetDays: 0,
+      dispatchTime: document.getElementById("autoStageOnCheckinTime")?.value || "12:00",
+      templateName: document.getElementById("autoStageOnCheckinTemplate")?.value || currentAutomationConfig.stages?.onCheckin?.templateName || "kt_invitation_",
+      badgeLabel: "🏨 Welcome",
+      color: "#a78bfa"
+    },
+    onCheckout: {
+      id: "onCheckout",
+      title: "On Check-out Day (Departure & Luggage)",
+      triggerType: "ON_CHECKOUT",
+      enabled: Boolean(document.getElementById("autoStageOnCheckoutEnabled")?.checked),
+      offsetDays: 0,
+      dispatchTime: document.getElementById("autoStageOnCheckoutTime")?.value || "09:00",
+      templateName: document.getElementById("autoStageOnCheckoutTemplate")?.value || currentAutomationConfig.stages?.onCheckout?.templateName || "kt_checkout_belongings_reminder",
+      badgeLabel: "🧳 Departure",
+      color: "#60a5fa"
+    },
+    afterCheckout: {
+      id: "afterCheckout",
+      title: "After Check-out (Review & Thank You)",
+      triggerType: "AFTER_CHECKOUT",
+      enabled: Boolean(document.getElementById("autoStageAfterCheckoutEnabled")?.checked),
+      offsetDays: parseInt(document.getElementById("autoStageAfterCheckoutOffset")?.value || "1", 10),
+      dispatchTime: document.getElementById("autoStageAfterCheckoutTime")?.value || "18:00",
+      templateName: document.getElementById("autoStageAfterCheckoutTemplate")?.value || currentAutomationConfig.stages?.afterCheckout?.templateName || "kt_restaurant_invitation",
+      badgeLabel: "⭐ Feedback",
+      color: "#f59e0b"
+    }
+  };
+}
+
+function renderStageStatusBadge(stageData) {
+  if (!stageData) {
+    return `<span class="status-badge" style="background: rgba(255,255,255,0.03); color: var(--text-subtle);">—</span>`;
+  }
+  const { status, templateName, dispatchTime, targetDate } = stageData;
+
+  if (status === "DUE_FOR_SEND") {
+    const tplLabel = templateName ? `: ${escapeHtml(templateName)}` : "";
+    return `<span class="status-badge" style="background: rgba(37,211,102,0.18); color: #25d366; border: 1px solid rgba(37,211,102,0.4); font-weight: 600;" title="Due right now (${dispatchTime || ''})">🚀 Due${tplLabel}</span>`;
+  }
+  if (status === "SCHEDULED_FOR_TODAY") {
+    return `<span class="status-badge" style="background: rgba(56,189,248,0.18); color: #38bdf8; border: 1px solid rgba(56,189,248,0.35); font-weight: 500;" title="Scheduled today at ${dispatchTime}">⏰ Today ${dispatchTime}</span>`;
+  }
+  if (status === "ALREADY_SENT") {
+    return `<span class="status-badge" style="background: rgba(16,185,129,0.12); color: #34d399;">✓ Sent</span>`;
+  }
+  if (status === "FUTURE_UPCOMING") {
+    const dateLabel = targetDate ? ` (${targetDate.slice(5)})` : "";
+    return `<span class="status-badge" style="background: rgba(255,255,255,0.05); color: var(--text-muted);" title="Target date: ${targetDate || ''}">Upcoming${dateLabel}</span>`;
+  }
+  if (status === "PAST" || status === "PAST_CHECKIN" || status === "PAST_CHECKOUT") {
+    return `<span class="status-badge" style="background: rgba(255,255,255,0.03); color: var(--text-subtle);">Past</span>`;
+  }
+  if (status === "DISABLED") {
+    return `<span class="status-badge" style="background: rgba(255,255,255,0.02); color: var(--text-subtle); opacity: 0.6;">Disabled</span>`;
+  }
+  if (status === "MISSING_DATE") {
+    return `<span class="status-badge" style="color: var(--status-danger);">No Date</span>`;
+  }
+  return `<span class="status-badge" style="background: rgba(255,255,255,0.03); color: var(--text-subtle);">${escapeHtml(status || '—')}</span>`;
+}
+
+async function loadAutomationDashboard() {
+  try {
+    const res = await fetch("/api/automation/config");
+    const json = await res.json();
+    if (json.success && json.data) {
+      const c = json.data;
+      if (autoSheetUrlInput) autoSheetUrlInput.value = c.googleSheetUrl || "";
+      if (autoPropertyNameInput) autoPropertyNameInput.value = c.defaultPropertyName || "KonkanTrip Beach Resort";
+
+      if (autoEnabledToggle) {
+        autoEnabledToggle.checked = Boolean(c.enabled);
+        if (autoEnabledLabel) {
+          autoEnabledLabel.textContent = c.enabled ? "Active (Every 1 min scan)" : "Paused (Manual Only)";
+        }
+      }
+
+      const metricLastSync = document.getElementById("metricAutoLastSync");
+      if (metricLastSync && c.lastSyncAt) {
+        metricLastSync.textContent = new Date(c.lastSyncAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      }
+
+      // Populate 4 stages configuration
+      if (c.stages) {
+        currentAutomationConfig.stages = c.stages;
+
+        // Stage 1: Before Check-in
+        const s1 = c.stages.beforeCheckin;
+        if (s1) {
+          const elEn = document.getElementById("autoStageBeforeCheckinEnabled");
+          const elOff = document.getElementById("autoStageBeforeCheckinOffset");
+          const elTime = document.getElementById("autoStageBeforeCheckinTime");
+          if (elEn) elEn.checked = Boolean(s1.enabled);
+          if (elOff && s1.offsetDays !== undefined) elOff.value = String(s1.offsetDays);
+          if (elTime && s1.dispatchTime) elTime.value = s1.dispatchTime;
+        }
+
+        // Stage 2: On Check-in Day
+        const s2 = c.stages.onCheckin;
+        if (s2) {
+          const elEn = document.getElementById("autoStageOnCheckinEnabled");
+          const elTime = document.getElementById("autoStageOnCheckinTime");
+          if (elEn) elEn.checked = Boolean(s2.enabled);
+          if (elTime && s2.dispatchTime) elTime.value = s2.dispatchTime;
+        }
+
+        // Stage 3: On Check-out Day
+        const s3 = c.stages.onCheckout;
+        if (s3) {
+          const elEn = document.getElementById("autoStageOnCheckoutEnabled");
+          const elTime = document.getElementById("autoStageOnCheckoutTime");
+          if (elEn) elEn.checked = Boolean(s3.enabled);
+          if (elTime && s3.dispatchTime) elTime.value = s3.dispatchTime;
+        }
+
+        // Stage 4: After Check-out Day
+        const s4 = c.stages.afterCheckout;
+        if (s4) {
+          const elEn = document.getElementById("autoStageAfterCheckoutEnabled");
+          const elOff = document.getElementById("autoStageAfterCheckoutOffset");
+          const elTime = document.getElementById("autoStageAfterCheckoutTime");
+          if (elEn) elEn.checked = Boolean(s4.enabled);
+          if (elOff && s4.offsetDays !== undefined) elOff.value = String(s4.offsetDays);
+          if (elTime && s4.dispatchTime) elTime.value = s4.dispatchTime;
+        }
+      }
+
+      renderAutomationTemplateDropdowns();
+
+      // If sheet URL is already set, inspect sheet to show live preview table
+      if (c.googleSheetUrl) {
+        inspectGoogleSheet(false);
+      }
+    }
+
+    loadAutomationHistory();
+  } catch (err) {
+    console.warn("Failed to load automation config:", err);
+  }
+}
+
+// Stage dropdown and input change listeners
+[
+  "autoStageBeforeCheckinTemplate",
+  "autoStageOnCheckinTemplate",
+  "autoStageOnCheckoutTemplate",
+  "autoStageAfterCheckoutTemplate",
+  "autoStageBeforeCheckinOffset",
+  "autoStageAfterCheckoutOffset",
+  "autoStageBeforeCheckinTime",
+  "autoStageOnCheckinTime",
+  "autoStageOnCheckoutTime",
+  "autoStageAfterCheckoutTime",
+  "autoStageBeforeCheckinEnabled",
+  "autoStageOnCheckinEnabled",
+  "autoStageOnCheckoutEnabled",
+  "autoStageAfterCheckoutEnabled"
+].forEach(id => {
+  const el = document.getElementById(id);
+  if (el) {
+    el.addEventListener("change", () => {
+      updateAutomationTemplateHints();
+      if (autoSheetUrlInput?.value?.trim()) {
+        inspectGoogleSheet(false);
+      }
+    });
+  }
+});
+
+const btnAutoOpenAddTemplateModal = document.getElementById("btnAutoOpenAddTemplateModal");
+if (btnAutoOpenAddTemplateModal) {
+  btnAutoOpenAddTemplateModal.addEventListener("click", () => {
+    btnOpenAddTemplateModal.click();
+  });
+}
+
+async function saveAutomationConfig() {
+  if (!btnSaveAutomationConfig) return;
+  const sheetUrl = autoSheetUrlInput?.value?.trim() || "";
+  const defaultPropertyName = autoPropertyNameInput?.value?.trim() || "KonkanTrip Beach Resort";
+  const enabled = Boolean(autoEnabledToggle?.checked);
+  const stages = getActiveStagesFromUI();
+
+  btnSaveAutomationConfig.disabled = true;
+  btnSaveAutomationConfig.textContent = "Saving...";
+
+  try {
+    const res = await fetch("/api/automation/config", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        googleSheetUrl: sheetUrl,
+        defaultPropertyName,
+        enabled,
+        stages,
+        preCheckinOffsetDays: stages.beforeCheckin.offsetDays,
+        preCheckinTemplate: stages.beforeCheckin.templateName,
+        checkoutTemplate: stages.onCheckout.templateName
+      })
+    });
+    const data = await res.json();
+    if (data.success) {
+      showToast("Booking lifecycle automation settings saved!", "success");
+      if (sheetUrl) {
+        inspectGoogleSheet(false);
+      }
+    } else {
+      throw new Error(data.message || "Failed to save settings");
+    }
+  } catch (err) {
+    showToast(err.message, "error");
+  } finally {
+    btnSaveAutomationConfig.disabled = false;
+    btnSaveAutomationConfig.textContent = "💾 Save Settings";
+  }
+}
+
+if (btnSaveAutomationConfig) {
+  btnSaveAutomationConfig.addEventListener("click", saveAutomationConfig);
+}
+
+async function inspectGoogleSheet(userInitiated = false) {
+  const sheetUrl = autoSheetUrlInput?.value?.trim();
+  if (!sheetUrl) {
+    if (userInitiated) {
+      showToast("Please enter or paste your Google Sheet URL first.", "warning");
+      autoSheetUrlInput?.focus();
+    }
+    return;
+  }
+
+  const tableBody = document.getElementById("autoBookingsTableBody");
+  if (tableBody) {
+    tableBody.innerHTML = `
+      <tr>
+        <td colspan="10" style="text-align: center; color: var(--accent-wa); padding: 2.5rem;">
+          <div style="display: flex; align-items: center; justify-content: center; gap: 0.75rem;">
+            <div class="pulse-dot" style="display: inline-block;"></div>
+            <span>Fetching live Google Sheet data &amp; evaluating 4-stage triggers...</span>
+          </div>
+        </td>
+      </tr>
+    `;
+  }
+
+  if (btnPreviewSheet) {
+    btnPreviewSheet.disabled = true;
+    btnPreviewSheet.textContent = "Inspecting...";
+  }
+
+  try {
+    const currentStages = getActiveStagesFromUI();
+    const res = await fetch("/api/automation/preview", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sheetUrl,
+        stages: currentStages,
+        preCheckinTemplate: currentStages.beforeCheckin.templateName,
+        checkoutTemplate: currentStages.onCheckout.templateName
+      })
+    });
+    const json = await res.json();
+
+    if (!json.success || !json.data) {
+      throw new Error(json.message || "Could not inspect sheet");
+    }
+
+    const d = json.data;
+
+    // Update metrics
+    const mTotal = document.getElementById("metricAutoTotal");
+    const mPre = document.getElementById("metricAutoPreCheckinDue");
+    const mOnIn = document.getElementById("metricAutoOnCheckinDue");
+    const mOut = document.getElementById("metricAutoCheckoutDue");
+    const mAfterOut = document.getElementById("metricAutoAfterCheckoutDue");
+    const mSched = document.getElementById("metricAutoScheduledToday");
+    const mBadge = document.getElementById("navAutomationBadge");
+
+    if (mTotal) mTotal.textContent = d.validBookingsCount ?? d.totalRows ?? 0;
+    if (mPre) mPre.textContent = d.dueBeforeCheckinCount ?? d.duePreCheckinCount ?? 0;
+    if (mOnIn) mOnIn.textContent = d.dueOnCheckinCount ?? 0;
+    if (mOut) mOut.textContent = d.dueOnCheckoutCount ?? d.dueCheckoutCount ?? 0;
+    if (mAfterOut) mAfterOut.textContent = d.dueAfterCheckoutCount ?? 0;
+    if (mSched) mSched.textContent = d.scheduledTodayCount ?? 0;
+
+    const mSysDate = document.getElementById("metricAutoSystemToday");
+    if (mSysDate && d.todayDate) {
+      mSysDate.textContent = d.todayDate;
+    }
+
+    const mSysTime = document.getElementById("metricAutoSystemTime");
+    if (mSysTime && d.systemTime) {
+      mSysTime.textContent = d.systemTime;
+    }
+
+    const totalDue = (d.dueBeforeCheckinCount || 0) + (d.dueOnCheckinCount || 0) + (d.dueOnCheckoutCount || 0) + (d.dueAfterCheckoutCount || 0);
+    if (mBadge) {
+      if (totalDue > 0) {
+        mBadge.textContent = totalDue;
+        mBadge.style.display = "inline-block";
+      } else {
+        mBadge.style.display = "none";
+      }
+    }
+
+    // Update detected columns banner
+    const colSummary = document.getElementById("autoDetectedColumnsSummary");
+    if (colSummary && d.detectedColumns) {
+      const cols = d.detectedColumns;
+      colSummary.innerHTML = `
+        Detected: <strong>Name</strong> (${cols.nameCol || "—"}) &bull; 
+        <strong>Phone</strong> (${cols.phoneCol || "—"}) &bull; 
+        <strong>Check-in</strong> (${cols.checkinCol || "—"}) &bull; 
+        <strong>Check-out</strong> (${cols.checkoutCol || "—"})
+      `;
+    }
+
+    // Render bookings table
+    if (tableBody) {
+      if (!d.bookings || d.bookings.length === 0) {
+        tableBody.innerHTML = `
+          <tr>
+            <td colspan="10" style="text-align: center; color: var(--text-muted); padding: 2rem;">
+              No bookings found in the spreadsheet.
+            </td>
+          </tr>
+        `;
+        return;
+      }
+
+      tableBody.innerHTML = d.bookings.map((b, idx) => {
+        const phoneDisplay = b.cleanPhone ? `+${b.cleanPhone}` : (b.rawPhone || "<span style='color:var(--status-danger)'>Missing</span>");
+
+        const stageBefore = b.stages?.beforeCheckin || { status: b.preCheckinStatus, templateName: b.preCheckinTemplate };
+        const stageOnCheckin = b.stages?.onCheckin;
+        const stageOnCheckout = b.stages?.onCheckout || { status: b.checkoutStatus, templateName: b.checkoutTemplate };
+        const stageAfter = b.stages?.afterCheckout;
+
+        return `
+          <tr style="${b.isDueNow ? 'background: rgba(37,211,102,0.04);' : ''}">
+            <td style="color: var(--text-subtle);">${idx + 1}</td>
+            <td style="font-weight: 600; color: #fff;">${escapeHtml(b.guestName || "Guest")}</td>
+            <td style="font-family: monospace; font-size: 0.84rem;">${phoneDisplay}</td>
+            <td style="font-family: monospace;">${b.checkinDate || '<span style="color:var(--text-subtle)">—</span>'}</td>
+            <td style="font-family: monospace;">${b.checkoutDate || '<span style="color:var(--text-subtle)">—</span>'}</td>
+            <td style="font-size: 0.82rem; color: var(--text-muted);">${escapeHtml(b.propertyName || "—")}</td>
+            <td>${renderStageStatusBadge(stageBefore)}</td>
+            <td>${renderStageStatusBadge(stageOnCheckin)}</td>
+            <td>${renderStageStatusBadge(stageOnCheckout)}</td>
+            <td>${renderStageStatusBadge(stageAfter)}</td>
+          </tr>
+        `;
+      }).join("");
+    }
+
+    if (userInitiated) {
+      showToast(`Sheet inspected: ${d.bookings.length} guests parsed, ${totalDue} due right now, ${d.scheduledTodayCount || 0} scheduled later today!`, "success");
+    }
+  } catch (err) {
+    if (tableBody) {
+      tableBody.innerHTML = `
+        <tr>
+          <td colspan="10" style="text-align: center; color: var(--status-danger); padding: 2rem;">
+            Failed to inspect Google Sheet: ${escapeHtml(err.message)}
+          </td>
+        </tr>
+      `;
+    }
+    if (userInitiated) {
+      showToast(err.message, "error");
+    }
+  } finally {
+    if (btnPreviewSheet) {
+      btnPreviewSheet.disabled = false;
+      btnPreviewSheet.textContent = "🔍 Inspect Sheet";
+    }
+  }
+}
+
+if (btnPreviewSheet) {
+  btnPreviewSheet.addEventListener("click", () => inspectGoogleSheet(true));
+}
+
+async function runAutomationNow() {
+  if (!btnRunAutomationNow) return;
+
+  btnRunAutomationNow.disabled = true;
+  btnRunAutomationNow.textContent = "Executing...";
+
+  try {
+    const res = await fetch("/api/automation/run-now", { method: "POST" });
+    const data = await res.json();
+
+    if (data.success) {
+      showToast(data.message || "Automation executed successfully!", "success");
+      await inspectGoogleSheet(false);
+      await loadAutomationHistory();
+    } else {
+      throw new Error(data.message || "Automation failed");
+    }
+  } catch (err) {
+    showToast(err.message, "error");
+  } finally {
+    btnRunAutomationNow.disabled = false;
+    btnRunAutomationNow.textContent = "🚀 Run Automation Now";
+  }
+}
+
+if (btnRunAutomationNow) {
+  btnRunAutomationNow.addEventListener("click", runAutomationNow);
+}
+
+async function loadAutomationHistory() {
+  const tableBody = document.getElementById("autoHistoryTableBody");
+  if (!tableBody) return;
+
+  try {
+    const res = await fetch("/api/automation/history?limit=50");
+    const json = await res.json();
+    if (!json.success || !json.data || json.data.length === 0) {
+      tableBody.innerHTML = `
+        <tr>
+          <td colspan="7" style="text-align: center; color: var(--text-muted); padding: 2rem;">
+            No automated messages dispatched yet.
+          </td>
+        </tr>
+      `;
+      return;
+    }
+
+    tableBody.innerHTML = json.data.map(d => {
+      let typeLabel = d.trigger_type;
+      if (d.trigger_type === "BEFORE_CHECKIN" || d.trigger_type === "PRE_CHECKIN") {
+        typeLabel = `<span style="color: #25d366; font-weight: 500;">🚗 Before Check-in</span>`;
+      } else if (d.trigger_type === "ON_CHECKIN") {
+        typeLabel = `<span style="color: #a78bfa; font-weight: 500;">🏨 On Check-in</span>`;
+      } else if (d.trigger_type === "ON_CHECKOUT" || d.trigger_type === "CHECKOUT") {
+        typeLabel = `<span style="color: #60a5fa; font-weight: 500;">🧳 On Check-out</span>`;
+      } else if (d.trigger_type === "AFTER_CHECKOUT") {
+        typeLabel = `<span style="color: #f59e0b; font-weight: 500;">⭐ After Check-out</span>`;
+      }
+
+      const statusBadge = d.status === "SENT"
+        ? `<span class="status-badge" style="background: rgba(16,185,129,0.15); color: #10b981;">✓ SENT</span>`
+        : `<span class="status-badge" style="background: rgba(239,68,68,0.15); color: #ef4444;" title="${escapeHtml(d.error_message || "")}">FAILED</span>`;
+
+      const dateStr = d.dispatched_at ? new Date(d.dispatched_at).toLocaleString() : "—";
+
+      return `
+        <tr>
+          <td style="font-size: 0.8rem; color: var(--text-muted); font-family: monospace;">${dateStr}</td>
+          <td style="font-weight: 600;">${escapeHtml(d.guest_name || "Guest")}</td>
+          <td style="font-family: monospace; font-size: 0.84rem;">+${d.clean_phone}</td>
+          <td>${typeLabel}</td>
+          <td style="font-size: 0.82rem; font-family: monospace; color: var(--accent-wa);">${d.template_name}</td>
+          <td>${statusBadge}</td>
+          <td style="font-size: 0.76rem; font-family: monospace; color: var(--text-subtle);">${d.meta_message_id || "—"}</td>
+        </tr>
+      `;
+    }).join("");
+  } catch (err) {
+    console.warn("Failed to load automation history:", err);
+  }
+}
+
+if (btnRefreshAutoHistory) {
+  btnRefreshAutoHistory.addEventListener("click", loadAutomationHistory);
+}
+
 // Run initial Meta check, templates load, webhook config & replies check on page load
+initSystemTimeSync();
 checkMetaStatus();
 loadSystemTemplates();
 updatePhoneMockup();
 loadWebhookConfig();
 loadCustomerReplies();
 loadAutoReplySettings();
+loadAutomationDashboard();
 initSSE();
 
 

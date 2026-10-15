@@ -5,6 +5,16 @@ async function runTemplateCrudTests() {
   console.log("=== RUNNING TEMPLATE SYSTEM REGISTRY & CRUD TESTS ===\n");
   const baseUrl = "http://localhost:5000";
 
+  // Login as admin for RBAC-protected operations
+  const loginRes = await fetch(`${baseUrl}/api/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: "admin@konkantrip.com", password: "Admin@12345" })
+  });
+  const loginData = await loginRes.json();
+  const adminToken = loginData.token;
+  console.log("✓ Admin logged in for protected template management operations");
+
   // Test 1: List all templates
   console.log("[Test 1] GET /api/templates (List saved templates)");
   const listRes = await fetch(`${baseUrl}/api/templates`);
@@ -85,7 +95,10 @@ async function runTemplateCrudTests() {
 
   // Test 7: Delete custom template
   console.log("\n[Test 7] DELETE /api/templates/weekend_special_offer");
-  const delRes = await fetch(`${baseUrl}/api/templates/weekend_special_offer`, { method: "DELETE" });
+  const delRes = await fetch(`${baseUrl}/api/templates/weekend_special_offer`, {
+    method: "DELETE",
+    headers: { "Authorization": `Bearer ${adminToken}` }
+  });
   const delData = await delRes.json();
   if (!delData.success) throw new Error(`Delete failed: ${delData.message}`);
   console.log(`✓ Deleted custom template successfully.`);

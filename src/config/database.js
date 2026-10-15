@@ -1,5 +1,7 @@
 const fs = require("fs");
 const path = require("path");
+const crypto = require("crypto");
+const bcrypt = require("bcryptjs");
 const { DatabaseSync } = require("node:sqlite");
 const config = require("./env");
 
@@ -92,6 +94,68 @@ function initializeDatabase() {
       FOREIGN KEY (campaign_id) REFERENCES campaigns(id) ON DELETE SET NULL
     );
 
+    CREATE TABLE IF NOT EXISTS automated_booking_dispatches (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      booking_id TEXT,
+      guest_name TEXT,
+      phone_number TEXT NOT NULL,
+      clean_phone TEXT NOT NULL,
+      property_name TEXT,
+      checkin_date TEXT,
+      checkout_date TEXT,
+      trigger_type TEXT NOT NULL,
+      template_name TEXT NOT NULL,
+      meta_message_id TEXT,
+      status TEXT DEFAULT 'SENT',
+      error_message TEXT,
+      dispatched_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      email TEXT UNIQUE NOT NULL COLLATE NOCASE,
+      phone TEXT,
+      password_hash TEXT NOT NULL,
+      role TEXT DEFAULT 'USER' CHECK(role IN ('ADMIN', 'USER')),
+      status TEXT DEFAULT 'ACTIVE' CHECK(status IN ('ACTIVE', 'SUSPENDED')),
+      assigned_phone_id TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      last_login_at DATETIME
+    );
+
+    CREATE TABLE IF NOT EXISTS waba_phone_numbers (
+      id TEXT PRIMARY KEY,
+      display_name TEXT NOT NULL,
+      phone_number TEXT NOT NULL,
+      phone_number_id TEXT UNIQUE NOT NULL,
+      waba_id TEXT,
+      quality_rating TEXT DEFAULT 'GREEN',
+      status TEXT DEFAULT 'VERIFIED',
+      is_default INTEGER DEFAULT 0,
+      registered_by TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS automated_booking_contacts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      booking_id TEXT,
+      guest_name TEXT,
+      phone_number TEXT,
+      clean_phone TEXT NOT NULL,
+      property_name TEXT,
+      checkin_date TEXT,
+      checkout_date TEXT,
+      raw_data TEXT,
+      source TEXT DEFAULT 'UPLOAD',
+      user_id TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
     CREATE INDEX IF NOT EXISTS idx_recipients_campaign ON campaign_recipients(campaign_id);
     CREATE INDEX IF NOT EXISTS idx_recipients_status ON campaign_recipients(campaign_id, status);
     CREATE INDEX IF NOT EXISTS idx_templates_name ON templates(name);
@@ -100,6 +164,13 @@ function initializeDatabase() {
     CREATE INDEX IF NOT EXISTS idx_replies_campaign ON customer_replies(campaign_id);
     CREATE INDEX IF NOT EXISTS idx_replies_received ON customer_replies(received_at);
     CREATE INDEX IF NOT EXISTS idx_replies_is_read ON customer_replies(is_read);
+    CREATE INDEX IF NOT EXISTS idx_auto_booking_phone_trigger ON automated_booking_dispatches(clean_phone, trigger_type, checkin_date);
+    CREATE INDEX IF NOT EXISTS idx_auto_booking_dispatched ON automated_booking_dispatches(dispatched_at);
+    CREATE INDEX IF NOT EXISTS idx_auto_contacts_phone ON automated_booking_contacts(clean_phone);
+    CREATE INDEX IF NOT EXISTS idx_auto_contacts_checkin ON automated_booking_contacts(checkin_date);
+    CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+    CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
+    CREATE INDEX IF NOT EXISTS idx_waba_phone_id ON waba_phone_numbers(phone_number_id);
   `);
 
   // Migrate existing databases: add scheduled_at column if not present
@@ -127,8 +198,39 @@ function initializeDatabase() {
     if (!cols.includes("reply_status")) {
       db.exec("ALTER TABLE customer_replies ADD COLUMN reply_status TEXT;");
     }
+    if (!cols.includes("user_id")) {
+      db.exec("ALTER TABLE customer_replies ADD COLUMN user_id TEXT;");
+    }
+    db.exec("CREATE INDEX IF NOT EXISTS idx_customer_replies_user ON customer_replies(user_id);");
   } catch (migErr2) {
     console.warn("[DB Migration] customer_replies columns check:", migErr2.message);
+  }
+
+  // Migrate campaigns: add user_id and phone_number_id columns if not present
+  try {
+    const tableInfo = db.prepare("PRAGMA table_info(campaigns)").all();
+    const cols = tableInfo.map(c => c.name);
+    if (!cols.includes("user_id")) {
+      db.exec("ALTER TABLE campaigns ADD COLUMN user_id TEXT;");
+    }
+    if (!cols.includes("phone_number_id")) {
+      db.exec("ALTER TABLE campaigns ADD COLUMN phone_number_id TEXT;");
+    }
+    db.exec("CREATE INDEX IF NOT EXISTS idx_campaigns_user ON campaigns(user_id);");
+  } catch (migErr3) {
+    console.warn("[DB Migration] campaigns user columns check:", migErr3.message);
+  }
+
+  // Migrate automated_booking_dispatches: add user_id column if not present
+  try {
+    const tableInfo = db.prepare("PRAGMA table_info(automated_booking_dispatches)").all();
+    const cols = tableInfo.map(c => c.name);
+    if (!cols.includes("user_id")) {
+      db.exec("ALTER TABLE automated_booking_dispatches ADD COLUMN user_id TEXT;");
+    }
+    db.exec("CREATE INDEX IF NOT EXISTS idx_auto_booking_user ON automated_booking_dispatches(user_id);");
+  } catch (migErr4) {
+    console.warn("[DB Migration] automated_booking_dispatches user column check:", migErr4.message);
   }
 
   // Seed default templates if empty
@@ -241,6 +343,18 @@ function initializeDatabase() {
       "AUTO_REPLY_MESSAGE",
       "Hi {{name}}, thank you for reaching out to KonkanTrip! We have received your message and our team will get back to you shortly."
     );
+  }
+  if (!getSetting.get("BOOKING_AUTOMATION_ENABLED")) {
+    setSetting.run("BOOKING_AUTOMATION_ENABLED", "true");
+  }
+  if (!getSetting.get("PRE_CHECKIN_OFFSET_DAYS")) {
+    setSetting.run("PRE_CHECKIN_OFFSET_DAYS", "1");
+  }
+  if (!getSetting.get("PRE_CHECKIN_TEMPLATE")) {
+    setSetting.run("PRE_CHECKIN_TEMPLATE", "kt_best_route_to_property");
+  }
+  if (!getSetting.get("CHECKOUT_TEMPLATE")) {
+    setSetting.run("CHECKOUT_TEMPLATE", "kt_checkout_belongings_reminder");
   }
 }
 

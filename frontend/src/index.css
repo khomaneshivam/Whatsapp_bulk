@@ -1,0 +1,344 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
+
+:root {
+  /* Enterprise Light SaaS Palette (Mandated) */
+  --bg-primary: #F8FAFC;         /* Slate 50 */
+  --bg-secondary: #F1F5F9;       /* Slate 100 */
+  --bg-surface: #FFFFFF;         /* Pure White Surface */
+  --bg-surface-hover: #F8FAFC;
+  --bg-card: #FFFFFF;
+  --bg-card-hover: #F8FAFC;
+  
+  --border-color: #E2E8F0;       /* Slate 200 */
+  --border-strong: #CBD5E1;      /* Slate 300 */
+  --border-focus: #128C7E;
+  
+  /* Text & Typography */
+  --text-primary: #0F172A;       /* Slate 900 */
+  --text-secondary: #64748B;     /* Slate 500 */
+  --text-muted: #94A3B8;         /* Slate 400 */
+  --text-inverse: #FFFFFF;
+  
+  /* Brand WhatsApp Accents */
+  --brand-wa: #128C7E;           /* Meta WhatsApp Dark Teal */
+  --brand-wa-light: #25D366;     /* WhatsApp Bright Green */
+  --action-green: #16A34A;       /* Emerald / Green 600 */
+  --action-green-hover: #15803D;
+  
+  /* Semantic Status Colors */
+  --success: #15803D;
+  --success-bg: #DCFCE7;
+  --success-border: #BBF7D0;
+  
+  --warning: #D97706;
+  --warning-bg: #FEF3C7;
+  --warning-border: #FDE68A;
+  
+  --error: #DC2626;
+  --error-bg: #FEE2E2;
+  --error-border: #FECACA;
+  
+  --info: #2563EB;
+  --info-bg: #DBEAFE;
+  --info-border: #BFDBFE;
+
+  /* Shadows */
+  --shadow-xs: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  --shadow-sm: 0 1px 3px 0 rgba(0, 0, 0, 0.08), 0 1px 2px -1px rgba(0, 0, 0, 0.08);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.07), 0 2px 4px -2px rgba(0, 0, 0, 0.06);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.08), 0 4px 6px -4px rgba(0, 0, 0, 0.04);
+  --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.04);
+
+  --font-sans: 'Outfit', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--font-sans);
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  line-height: 1.5;
+  min-height: 100vh;
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Surfaces & Cards */
+.glass-panel, .saas-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  box-shadow: var(--shadow-xs);
+  transition: box-shadow 0.2s ease, border-color 0.2s ease;
+}
+
+.glass-panel-hover:hover, .saas-card-hover:hover {
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-md);
+}
+
+/* Inputs & Form Controls */
+.glass-input, .saas-input {
+  background: #FFFFFF;
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-family: var(--font-sans);
+  font-size: 0.925rem;
+  transition: all 0.2s ease;
+  width: 100%;
+}
+
+.glass-input:focus, .saas-input:focus {
+  outline: none;
+  border-color: var(--brand-wa);
+  box-shadow: 0 0 0 3px rgba(18, 140, 126, 0.15);
+  background: #FFFFFF;
+}
+
+.glass-input::placeholder, .saas-input::placeholder {
+  color: var(--text-muted);
+}
+
+/* Buttons */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 9px 18px;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 0.875rem;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: all 0.15s ease-in-out;
+  font-family: var(--font-sans);
+}
+
+.btn-primary {
+  background: var(--brand-wa);
+  color: #FFFFFF;
+  border-color: var(--brand-wa);
+  box-shadow: var(--shadow-xs);
+}
+.btn-primary:hover {
+  background: #0d7064;
+  border-color: #0d7064;
+  box-shadow: var(--shadow-sm);
+}
+.btn-primary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.btn-action-green {
+  background: var(--action-green);
+  color: #FFFFFF;
+  box-shadow: var(--shadow-xs);
+}
+.btn-action-green:hover {
+  background: var(--action-green-hover);
+}
+
+.btn-secondary {
+  background: #FFFFFF;
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  box-shadow: var(--shadow-xs);
+}
+.btn-secondary:hover {
+  background: var(--bg-secondary);
+  border-color: var(--border-strong);
+}
+
+.btn-danger {
+  background: var(--error-bg);
+  color: var(--error);
+  border: 1px solid var(--error-border);
+}
+.btn-danger:hover {
+  background: #fee2e2;
+  border-color: #fca5a5;
+}
+
+.btn-whatsapp {
+  background: #128C7E;
+  color: #FFFFFF;
+  box-shadow: 0 2px 6px rgba(18, 140, 126, 0.25);
+}
+.btn-whatsapp:hover {
+  background: #0d6e63;
+}
+
+/* Status Badges */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.badge-emerald, .badge-success {
+  background: var(--success-bg);
+  color: var(--success);
+  border: 1px solid var(--success-border);
+}
+
+.badge-amber, .badge-warning {
+  background: var(--warning-bg);
+  color: var(--warning);
+  border: 1px solid var(--warning-border);
+}
+
+.badge-blue, .badge-info {
+  background: var(--info-bg);
+  color: var(--info);
+  border: 1px solid var(--info-border);
+}
+
+.badge-rose, .badge-danger {
+  background: var(--error-bg);
+  color: var(--error);
+  border: 1px solid var(--error-border);
+}
+
+.badge-neutral {
+  background: #F1F5F9;
+  color: #475569;
+  border: 1px solid #E2E8F0;
+}
+
+/* Smartphone Mockup Frame */
+.smartphone-wrapper {
+  width: 320px;
+  background: #0f172a;
+  border-radius: 38px;
+  padding: 10px;
+  box-shadow: 0 20px 45px -10px rgba(15, 23, 42, 0.25), 0 0 0 2px #334155;
+  margin: 0 auto;
+}
+
+.smartphone-screen {
+  background: #0b141a;
+  background-image: 
+    radial-gradient(circle at center, rgba(17, 27, 33, 0.8) 0%, #0b141a 100%),
+    repeating-linear-gradient(45deg, rgba(255,255,255,0.015) 0, rgba(255,255,255,0.015) 1px, transparent 0, transparent 20px);
+  border-radius: 28px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  height: 520px;
+  position: relative;
+  border: 1px solid #1e293b;
+}
+
+.smartphone-notch {
+  width: 90px;
+  height: 18px;
+  background: #0f172a;
+  border-radius: 0 0 12px 12px;
+  margin: 0 auto;
+}
+
+.wa-bubble-received {
+  background: #202c33;
+  color: #e9edef;
+  border-radius: 8px 8px 8px 0;
+  padding: 10px 12px;
+  max-width: 88%;
+  font-size: 0.825rem;
+  line-height: 1.45;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.3);
+  position: relative;
+  word-wrap: break-word;
+}
+
+.wa-bubble-sent {
+  background: #005c4b;
+  color: #e9edef;
+  border-radius: 8px 8px 0 8px;
+  padding: 10px 12px;
+  max-width: 88%;
+  margin-left: auto;
+  font-size: 0.825rem;
+  line-height: 1.45;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.3);
+  position: relative;
+  word-wrap: break-word;
+}
+
+/* Custom Scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #F1F5F9;
+}
+::-webkit-scrollbar-thumb {
+  background: #CBD5E1;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94A3B8;
+}
+
+/* Data Table Styling */
+.data-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 0.875rem;
+}
+.data-table th {
+  background: #F8FAFC;
+  color: var(--text-secondary);
+  font-weight: 600;
+  text-align: left;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-color);
+  font-size: 0.775rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.data-table td {
+  padding: 12px 16px;
+  border-bottom: 1px solid #F1F5F9;
+  color: var(--text-primary);
+  background: #FFFFFF;
+}
+.data-table tr:hover td {
+  background: #F8FAFC;
+}
+
+/* Animations */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes pulseGlow {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}
+
+.pulse-glow {
+  animation: pulseGlow 2s infinite;
+}

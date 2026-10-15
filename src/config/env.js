@@ -15,6 +15,8 @@ const config = {
   WEBHOOK_VERIFY_TOKEN: process.env.WEBHOOK_VERIFY_TOKEN || "wb_verify_konkantrip_7f3a9e2c4b810d56",
   DATA_DIR: path.resolve(__dirname, "../../data"),
   UPLOADS_DIR: path.resolve(__dirname, "../../uploads"),
+  APP_TIMEZONE: process.env.APP_TIMEZONE || "Asia/Kolkata",
+  JWT_SECRET: process.env.JWT_SECRET || "wb_jwt_secret_konkantrip_98f4a1c6e2b70d83"
 };
 
 module.exports = config;

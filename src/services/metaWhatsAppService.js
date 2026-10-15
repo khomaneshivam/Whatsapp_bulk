@@ -1,4 +1,4 @@
-const { getSetting } = require("../config/database");
+const { getSetting, db } = require("../config/database");
 const config = require("../config/env");
 
 const META_GRAPH_VERSION = config.META_GRAPH_VERSION || "v21.0";
@@ -9,13 +9,29 @@ const META_BASE_URL = `https://graph.facebook.com/${META_GRAPH_VERSION}`;
  */
 function getActiveCredentials() {
   const token = getSetting("WHATSAPP_API_TOKEN") || config.WHATSAPP_API_TOKEN;
-  const phoneNumberId = getSetting("WHATSAPP_PHONE_NUMBER_ID") || config.WHATSAPP_PHONE_NUMBER_ID;
+  let phoneNumberId = getSetting("WHATSAPP_PHONE_NUMBER_ID") || config.WHATSAPP_PHONE_NUMBER_ID;
+
+  if (!phoneNumberId) {
+    try {
+      const defaultPhone = db.prepare("SELECT phone_number_id FROM waba_phone_numbers WHERE is_default = 1").get();
+      if (defaultPhone?.phone_number_id) {
+        phoneNumberId = defaultPhone.phone_number_id;
+      } else {
+        const anyPhone = db.prepare("SELECT phone_number_id FROM waba_phone_numbers ORDER BY id ASC LIMIT 1").get();
+        if (anyPhone?.phone_number_id) {
+          phoneNumberId = anyPhone.phone_number_id;
+        }
+      }
+    } catch (e) {
+      // Table might not exist or be empty
+    }
+  }
 
   if (!token) {
     throw new Error("Meta WhatsApp API Token is missing. Configure it in Settings.");
   }
   if (!phoneNumberId) {
-    throw new Error("Meta WhatsApp Phone Number ID is missing. Configure it in Settings.");
+    throw new Error("Meta WhatsApp Phone Number ID is missing. Please add a WhatsApp Phone Number in Settings or Topbar.");
   }
 
   return { token: token.trim(), phoneNumberId: phoneNumberId.trim() };
@@ -187,6 +203,33 @@ async function getTemplateDetails(templateIdOrName, customCredentials = null) {
 
   if (templateCache.has(key)) {
     return templateCache.get(key);
+  }
+
+  // Look in local SQLite templates table
+  try {
+    if (db) {
+      const row = db.prepare(`SELECT * FROM templates WHERE name = ? OR meta_id = ? OR id = ? LIMIT 1`).get(key, key, key);
+      if (row) {
+        const details = {
+          id: row.meta_id || row.id,
+          name: row.name,
+          language: row.language || "en",
+          status: row.status || "APPROVED",
+          category: row.category || "MARKETING",
+          parameter_format: row.parameter_format || "POSITIONAL",
+          bodyText: row.body_text || "",
+          variables: row.variables ? JSON.parse(row.variables) : [],
+          components: row.components ? JSON.parse(row.components) : [],
+          buttons: row.buttons ? JSON.parse(row.buttons) : []
+        };
+        templateCache.set(key, details);
+        templateCache.set(row.name, details);
+        if (row.meta_id) templateCache.set(String(row.meta_id), details);
+        return details;
+      }
+    }
+  } catch (dbErr) {
+    // Non-blocking fallback
   }
 
   // Pre-seed known template 1059862786867912 / kt_invitation_

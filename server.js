@@ -14,8 +14,15 @@ app.use(cors());
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 
-// Static files (Web Dashboard)
-app.use(express.static(path.join(__dirname, "public")));
+const fs = require("fs");
+const distPath = path.join(__dirname, "frontend", "dist");
+const publicPath = path.join(__dirname, "public");
+
+// Static files (Modern React SPA build or fallback)
+if (fs.existsSync(distPath)) {
+  app.use(express.static(distPath));
+}
+app.use(express.static(publicPath));
 
 const webhookController = require("./src/controllers/webhookController");
 
@@ -29,7 +36,11 @@ app.use("/api", apiRoutes);
 // Fallback for SPA
 app.get("*", (req, res) => {
   if (!req.path.startsWith("/api") && !req.path.startsWith("/webhook")) {
-    res.sendFile(path.join(__dirname, "public", "index.html"));
+    if (fs.existsSync(path.join(distPath, "index.html"))) {
+      res.sendFile(path.join(distPath, "index.html"));
+    } else {
+      res.sendFile(path.join(publicPath, "index.html"));
+    }
   } else {
     res.status(404).json({ success: false, message: "API endpoint not found" });
   }
@@ -45,7 +56,7 @@ app.use((err, req, res, next) => {
 });
 
 const PORT = config.PORT || 5000;
-const server = app.listen(PORT, () => {
+const server = app.listen(PORT, "0.0.0.0", () => {
   // Start background campaign scheduler
   schedulerService.initScheduler();
 

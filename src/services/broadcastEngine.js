@@ -138,7 +138,7 @@ class BroadcastEngine extends EventEmitter {
   /**
    * Starts or resumes a broadcast campaign
    */
-  async startCampaign(campaignId) {
+  async startCampaign(campaignId, overrideDelayMs = null) {
     const campaign = db.prepare("SELECT * FROM campaigns WHERE id = ?").get(campaignId);
     if (!campaign) {
       throw new Error(`Campaign '${campaignId}' not found.`);
@@ -148,10 +148,21 @@ class BroadcastEngine extends EventEmitter {
       throw new Error(`Campaign '${campaign.name}' is already currently running.`);
     }
 
+    if (overrideDelayMs !== null && overrideDelayMs !== undefined) {
+      const parsedDelay = parseInt(overrideDelayMs, 10);
+      if (!isNaN(parsedDelay) && parsedDelay >= 0) {
+        db.prepare("UPDATE campaigns SET delay_ms = ? WHERE id = ?").run(parsedDelay, campaignId);
+        campaign.delay_ms = parsedDelay;
+      }
+    }
+
+    const resolvedDelay = (campaign.delay_ms !== undefined && campaign.delay_ms !== null) ? campaign.delay_ms : 250;
+
     const jobState = {
       paused: false,
       cancelled: false,
-      running: true
+      running: true,
+      delayMs: resolvedDelay
     };
     this.activeJobs.set(campaignId, jobState);
 
@@ -165,7 +176,8 @@ class BroadcastEngine extends EventEmitter {
     this.emit("campaign:status", {
       campaignId,
       status: "RUNNING",
-      message: `Campaign '${campaign.name}' started.`
+      delayMs: resolvedDelay,
+      message: `Campaign '${campaign.name}' started with ${resolvedDelay}ms dispatch throttle delay.`
     });
 
     // Run queue in background (async worker)
@@ -173,7 +185,7 @@ class BroadcastEngine extends EventEmitter {
       console.error(`Error in broadcast queue for campaign ${campaignId}:`, err);
     });
 
-    return { success: true, message: `Campaign '${campaign.name}' is now running.` };
+    return { success: true, message: `Campaign '${campaign.name}' is now running.`, delayMs: resolvedDelay };
   }
 
   /**
@@ -310,8 +322,9 @@ class BroadcastEngine extends EventEmitter {
         }
 
         // Throttle to respect Meta Cloud API rate limits
-        if (delayMs > 0) {
-          await this.sleep(delayMs);
+        const currentDelay = (jobState && jobState.delayMs !== undefined) ? jobState.delayMs : (campaign.delay_ms || 250);
+        if (currentDelay > 0) {
+          await this.sleep(currentDelay);
         }
       }
     } catch (err) {
@@ -322,6 +335,30 @@ class BroadcastEngine extends EventEmitter {
       jobState.running = false;
       this.activeJobs.delete(campaignId);
     }
+  }
+
+  /**
+   * Updates dispatch throttle delay dynamically for a campaign
+   */
+  setCampaignDelay(campaignId, delayMs) {
+    const parsed = parseInt(delayMs, 10);
+    if (isNaN(parsed) || parsed < 0) {
+      throw new Error("Invalid throttle delay in milliseconds. Must be a non-negative integer.");
+    }
+
+    db.prepare("UPDATE campaigns SET delay_ms = ? WHERE id = ?").run(parsed, campaignId);
+    const job = this.activeJobs.get(campaignId);
+    if (job) {
+      job.delayMs = parsed;
+    }
+
+    this.emit("campaign:throttle", {
+      campaignId,
+      delayMs: parsed,
+      message: `Dispatch throttle delay updated to ${parsed}ms.`
+    });
+
+    return { success: true, delayMs: parsed };
   }
 
   /**
@@ -341,16 +378,24 @@ class BroadcastEngine extends EventEmitter {
   /**
    * Resumes a paused campaign
    */
-  resumeCampaign(campaignId) {
+  resumeCampaign(campaignId, overrideDelayMs = null) {
+    if (overrideDelayMs !== null && overrideDelayMs !== undefined) {
+      this.setCampaignDelay(campaignId, overrideDelayMs);
+    }
     const job = this.activeJobs.get(campaignId);
     if (job && job.running) {
       job.paused = false;
       db.prepare("UPDATE campaigns SET status = 'RUNNING' WHERE id = ?").run(campaignId);
-      this.emit("campaign:status", { campaignId, status: "RUNNING", message: "Campaign resumed." });
-      return { success: true, message: "Campaign resumed successfully." };
+      this.emit("campaign:status", {
+        campaignId,
+        status: "RUNNING",
+        delayMs: job.delayMs,
+        message: `Campaign resumed with ${job.delayMs}ms dispatch throttle delay.`
+      });
+      return { success: true, message: "Campaign resumed successfully.", delayMs: job.delayMs };
     }
     // If not in memory active job, start it afresh
-    return this.startCampaign(campaignId);
+    return this.startCampaign(campaignId, overrideDelayMs);
   }
 
   /**

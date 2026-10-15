@@ -9,7 +9,8 @@ async function getSettings(req, res) {
     const settings = getAllSettings();
     return res.status(200).json({
       success: true,
-      data: settings
+      data: settings,
+      settings: settings
     });
   } catch (error) {
     console.error("Get settings error:", error);
@@ -29,7 +30,8 @@ async function updateSettings(req, res) {
       BROADCAST_DELAY_MS,
       WHATSAPP_TEMPLATE_ID,
       DEFAULT_TEMPLATE_NAME,
-      DEFAULT_TEMPLATE_LANG
+      DEFAULT_TEMPLATE_LANG,
+      APP_TIMEZONE
     } = req.body || {};
 
     if (WHATSAPP_API_TOKEN !== undefined) {
@@ -52,6 +54,9 @@ async function updateSettings(req, res) {
     }
     if (DEFAULT_TEMPLATE_LANG !== undefined) {
       setSetting("DEFAULT_TEMPLATE_LANG", DEFAULT_TEMPLATE_LANG.trim());
+    }
+    if (APP_TIMEZONE !== undefined && APP_TIMEZONE.trim()) {
+      setSetting("APP_TIMEZONE", APP_TIMEZONE.trim());
     }
 
     const updated = getAllSettings();

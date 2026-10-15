@@ -5,7 +5,7 @@ const XLSX = require("xlsx");
 
 async function runTests() {
   console.log("=== Starting WhatsApp Bulk Broadcast System Verification ===\n");
-  const BASE_URL = "http://localhost:5050";
+  const BASE_URL = process.env.BASE_URL || "http://localhost:5000";
 
   // Test 1: Health / Settings Test Connection
   console.log("TEST 1: Testing Meta Cloud API Connection...");

@@ -28,6 +28,16 @@
     </div>
 
     <div class="header-actions">
+      <!-- Live System Clock & Timezone Indicator (Deployment & Local Synchronized) -->
+      <div class="system-time-pill" id="systemTimePill" title="Authoritative System Clock (Deployment & Local Synchronized)">
+        <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" style="color: #60a5fa;">
+          <circle cx="12" cy="12" r="10"></circle>
+          <polyline points="12 6 12 12 16 14"></polyline>
+        </svg>
+        <span id="systemTimeText" style="font-family: monospace; font-size: 0.82rem; font-weight: 600; color: #f3f4f6;">--:--:--</span>
+        <span class="tz-badge" id="systemTzBadge" style="font-size: 0.7rem; background: rgba(59, 130, 246, 0.15); color: #60a5fa; padding: 1px 6px; border-radius: 4px; font-weight: 600;">IST</span>
+      </div>
+
       <div class="meta-status-pill" id="metaStatusPill" title="Click to test Meta connection">
         <span class="pulse-dot" id="metaStatusDot"></span>
         <span id="metaStatusText">Connecting to Meta...</span>
@@ -77,6 +87,17 @@
       </svg>
       Customer Replies
       <span class="badge-unread-counter" id="navRepliesBadge" style="display: none;">0</span>
+    </button>
+
+    <button class="nav-tab" data-tab="tab-automation" id="tabNavAutomation">
+      <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+        <polyline points="14 2 14 8 20 8"></polyline>
+        <line x1="16" y1="13" x2="8" y2="13"></line>
+        <line x1="16" y1="17" x2="8" y2="17"></line>
+      </svg>
+      Booking Automation (Google Sheets)
+      <span class="badge-unread-counter" id="navAutomationBadge" style="display: none; background: #10b981;">0</span>
     </button>
   </div>
 
@@ -225,11 +246,12 @@
 
             <!-- Template Mode Fields -->
             <div id="templateModeFields">
-              <!-- Saved System Templates -->
-              <div style="margin-bottom: 1rem;">
+              <!-- Saved System Templates Dropdown & Pill Picker -->
+              <div style="margin-bottom: 1rem; background: rgba(255, 255, 255, 0.02); border: 1px solid var(--border-glass); border-radius: var(--radius-sm); padding: 0.85rem;">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.45rem;">
-                  <label class="form-label" style="margin-bottom: 0;">
-                    <span>Saved System Templates</span>
+                  <label class="form-label" for="selectSavedBroadcastTemplate" style="margin-bottom: 0; display: flex; align-items: center; gap: 0.4rem; color: #fff;">
+                    <span>📂</span>
+                    <span>Select Stored Template from Database</span>
                   </label>
                   <button type="button" class="btn btn-secondary btn-sm" id="btnOpenAddTemplateModal"
                     style="font-size: 0.74rem; padding: 0.25rem 0.65rem; border-color: rgba(37, 211, 102, 0.4); color: var(--accent-wa); cursor: pointer; display: inline-flex; align-items: center; gap: 0.35rem;">
@@ -237,10 +259,13 @@
                       <line x1="12" y1="5" x2="12" y2="19"></line>
                       <line x1="5" y1="12" x2="19" y2="12"></line>
                     </svg>
-                    ➕ Add Template
+                    ➕ Add Template to DB
                   </button>
                 </div>
-                <div id="savedTemplatesListContainer" style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+                <select id="selectSavedBroadcastTemplate" class="form-select" style="font-weight: 500; font-size: 0.85rem; margin-bottom: 0.6rem;">
+                  <option value="">-- Choose from Stored Templates in Database --</option>
+                </select>
+                <div id="savedTemplatesListContainer" style="display: flex; gap: 0.4rem; flex-wrap: wrap;">
                   <!-- Dynamically populated from /api/templates -->
                 </div>
               </div>
@@ -260,8 +285,8 @@
                   <span>Meta Template Number / ID or Name</span>
                   <span id="tplFetchStatusBadge" style="font-size: 0.72rem; color: var(--accent-wa); font-weight: 500; display: none;"></span>
                 </label>
-                <div style="display: flex; gap: 0.5rem;">
-                  <input type="text" id="inputTemplateName" class="form-input" style="flex: 1;"
+                <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+                  <input type="text" id="inputTemplateName" class="form-input" style="flex: 1; min-width: 220px;"
                     placeholder="Paste Template ID (e.g. 1059862786867912) or Name" value="kt_invitation_">
                   <button class="btn btn-secondary" type="button" id="btnFetchTemplate" style="white-space: nowrap; display: inline-flex; align-items: center; gap: 0.4rem;">
                     <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
@@ -270,9 +295,12 @@
                     </svg>
                     Inspect Template
                   </button>
+                  <button class="btn btn-secondary" type="button" id="btnSaveCurrentTemplateToDb" style="white-space: nowrap; display: inline-flex; align-items: center; gap: 0.4rem; border-color: rgba(37, 211, 102, 0.4); color: var(--accent-wa);" title="Store this template in database for future uses">
+                    💾 Save to DB
+                  </button>
                 </div>
                 <span style="font-size: 0.72rem; color: var(--text-muted);">
-                  Enter any Meta template number or name. Variables ({{1}}, {{2}} or named) are auto-detected and mapped to Excel columns.
+                  Select from stored templates above or enter any Meta template ID. Click "💾 Save to DB" to store new templates in the database permanently.
                 </span>
               </div>
 
@@ -689,6 +717,375 @@ KonkanTrip Partner Team</textarea>
       </section>
     </div>
 
+    <!-- TAB 4: GOOGLE SHEETS BOOKING AUTOMATION -->
+    <div id="tab-automation" class="tab-pane" style="display: none;">
+      <!-- Main Automation Configuration Panel -->
+      <section class="glass-panel" style="margin-bottom: 1.5rem;">
+        <div class="panel-header" style="flex-wrap: wrap; gap: 1rem;">
+          <div class="panel-title">
+            <svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+              <polyline points="14 2 14 8 20 8"></polyline>
+              <line x1="16" y1="13" x2="8" y2="13"></line>
+              <line x1="16" y1="17" x2="8" y2="17"></line>
+            </svg>
+            <div>
+              <span>Google Sheet Booking Automation</span>
+              <div style="font-size: 0.74rem; color: var(--text-muted); font-weight: normal; margin-top: 2px;">
+                Sync live bookings &amp; auto-send WhatsApp directions before check-in and reminders on checkout
+              </div>
+            </div>
+          </div>
+
+          <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center;">
+            <button class="btn btn-secondary btn-sm" id="btnPreviewSheet" title="Inspect and fetch Google Sheet columns &amp; rows">
+              <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                <circle cx="11" cy="11" r="8"></circle>
+                <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+              </svg>
+              🔍 Inspect Sheet
+            </button>
+            <button class="btn btn-primary btn-sm" id="btnRunAutomationNow" title="Trigger immediate check and dispatch due messages">
+              <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+              </svg>
+              🚀 Run Automation Now
+            </button>
+            <button class="btn btn-secondary btn-sm" id="btnSaveAutomationConfig" title="Save automation settings">
+              💾 Save Settings
+            </button>
+          </div>
+        </div>
+
+        <!-- Google Sheet URL and Config Fields -->
+        <div style="display: flex; flex-direction: column; gap: 1rem;">
+          <div class="form-group">
+            <label class="form-label" for="autoSheetUrl">
+              Live Google Sheet URL
+              <span style="color: var(--accent-wa); font-weight: normal; margin-left: 8px;">(Live Cloud Sync)</span>
+            </label>
+            <div style="display: flex; gap: 0.5rem;">
+              <input type="url" id="autoSheetUrl" class="form-input" style="font-family: monospace; font-size: 0.85rem;"
+                placeholder="https://docs.google.com/spreadsheets/d/your-spreadsheet-id/edit#gid=0">
+              <button class="btn btn-secondary btn-sm" id="btnPasteSheetUrl" type="button" title="Paste from clipboard">
+                📋 Paste
+              </button>
+            </div>
+            <span style="font-size: 0.72rem; color: var(--text-muted); margin-top: 4px; display: block;">
+              💡 <strong>Requirement:</strong> Open your Google Sheet &gt; Click <strong>Share</strong> &gt; Set General Access to <strong>"Anyone with the link can view"</strong>. Auto-detects Name, Mobile, Check-in, and Check-out columns.
+            </span>
+          </div>
+
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem;">
+            <div class="form-group" style="margin-bottom: 0;">
+              <label class="form-label" for="autoPropertyName">Default Property / Resort Name</label>
+              <input type="text" id="autoPropertyName" class="form-input" value="KonkanTrip Beach Resort">
+              <span style="font-size: 0.72rem; color: var(--text-muted);">Passed as variable {{2}} into Meta templates.</span>
+            </div>
+
+            <div class="form-group" style="display: flex; flex-direction: column; justify-content: center; margin-bottom: 0;">
+              <label class="form-label">Background Automation Status</label>
+              <label style="display: flex; align-items: center; gap: 0.6rem; cursor: pointer; margin-top: 0.25rem;">
+                <input type="checkbox" id="autoEnabledToggle" checked style="accent-color: var(--accent-wa); width: 18px; height: 18px;">
+                <span style="font-size: 0.88rem; font-weight: 600;" id="autoEnabledLabel">Active (Every 1 min scan)</span>
+              </label>
+              <span style="font-size: 0.72rem; color: var(--text-muted);">Background scheduler auto-evaluates dates &amp; target dispatch times.</span>
+            </div>
+          </div>
+
+          <!-- Automated Trigger Templates Configuration: 4-Stage Lifecycle Pipeline -->
+          <div style="background: rgba(255, 255, 255, 0.02); border: 1px solid var(--border-glass); border-radius: var(--radius-sm); padding: 1.1rem; margin-top: 0.25rem;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; flex-wrap: wrap; gap: 0.5rem;">
+              <div style="font-weight: 600; font-size: 0.88rem; color: #fff; display: flex; align-items: center; gap: 0.5rem;">
+                <svg width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" style="color: var(--accent-wa);">
+                  <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path>
+                  <polyline points="22,6 12,13 2,6"></polyline>
+                </svg>
+                <span>Automated Booking Lifecycle Pipeline (4 Configurable Stages)</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 0.75rem;">
+                <button type="button" class="btn btn-secondary btn-sm" id="btnAutoOpenAddTemplateModal"
+                  style="font-size: 0.74rem; padding: 0.25rem 0.65rem; color: var(--accent-wa); border-color: rgba(37,211,102,0.4); cursor: pointer;"
+                  title="Add new template to database">
+                  ➕ Add New Template to DB
+                </button>
+                <span style="font-size: 0.74rem; color: var(--text-muted);">Duplicate Prevention: <strong style="color: var(--status-success);">Active (1 send / booking / stage)</strong></span>
+              </div>
+            </div>
+
+            <!-- 4-Card Responsive Lifecycle Grid -->
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 0.85rem;">
+              
+              <!-- STAGE 1: BEFORE CHECK-IN DAY -->
+              <div class="stage-card" style="background: rgba(37, 211, 102, 0.03); border: 1px solid rgba(37, 211, 102, 0.25); border-radius: 8px; padding: 0.85rem; display: flex; flex-direction: column; gap: 0.6rem;">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                  <label style="display: flex; align-items: center; gap: 0.45rem; cursor: pointer; margin: 0; font-weight: 600; font-size: 0.84rem; color: #25d366;">
+                    <input type="checkbox" id="autoStageBeforeCheckinEnabled" checked style="accent-color: #25d366; width: 16px; height: 16px;">
+                    <span>🚗 Before Check-in</span>
+                  </label>
+                  <span class="badge" style="background: rgba(37,211,102,0.15); color: #25d366; font-size: 0.68rem;">Stage 1: Pre-Arrival</span>
+                </div>
+
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem;">
+                  <div>
+                    <label class="form-label" style="font-size: 0.7rem; margin-bottom: 0.2rem;">Trigger Day</label>
+                    <select id="autoStageBeforeCheckinOffset" class="form-select" style="font-size: 0.78rem; padding: 0.35rem 0.5rem;">
+                      <option value="1" selected>1 Day Before</option>
+                      <option value="2">2 Days Before</option>
+                      <option value="3">3 Days Before</option>
+                      <option value="0">Same Day (Arrival)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label class="form-label" style="font-size: 0.7rem; margin-bottom: 0.2rem;">Fixed Time (IST)</label>
+                    <input type="time" id="autoStageBeforeCheckinTime" value="10:00" class="form-input" style="font-size: 0.78rem; padding: 0.35rem 0.5rem; font-family: monospace;">
+                  </div>
+                </div>
+
+                <div>
+                  <label class="form-label" style="font-size: 0.7rem; margin-bottom: 0.2rem;">Stored Template</label>
+                  <select id="autoStageBeforeCheckinTemplate" class="form-select" style="font-size: 0.8rem;">
+                    <!-- Populated dynamically from database -->
+                  </select>
+                  <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 0.3rem;" id="autoStageBeforeCheckinHint">
+                    Route &amp; Directions
+                  </div>
+                </div>
+              </div>
+
+              <!-- STAGE 2: ON CHECK-IN DAY -->
+              <div class="stage-card" style="background: rgba(167, 139, 250, 0.03); border: 1px solid rgba(167, 139, 250, 0.25); border-radius: 8px; padding: 0.85rem; display: flex; flex-direction: column; gap: 0.6rem;">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                  <label style="display: flex; align-items: center; gap: 0.45rem; cursor: pointer; margin: 0; font-weight: 600; font-size: 0.84rem; color: #a78bfa;">
+                    <input type="checkbox" id="autoStageOnCheckinEnabled" style="accent-color: #a78bfa; width: 16px; height: 16px;">
+                    <span>🏨 On Check-in Day</span>
+                  </label>
+                  <span class="badge" style="background: rgba(167,139,250,0.15); color: #a78bfa; font-size: 0.68rem;">Stage 2: Arrival</span>
+                </div>
+
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem;">
+                  <div>
+                    <label class="form-label" style="font-size: 0.7rem; margin-bottom: 0.2rem;">Trigger Day</label>
+                    <div style="font-size: 0.76rem; font-weight: 500; color: #a78bfa; padding: 0.4rem 0.5rem; background: rgba(167,139,250,0.08); border: 1px solid rgba(167,139,250,0.2); border-radius: 4px; text-align: center;">
+                      Check-In Day
+                    </div>
+                  </div>
+                  <div>
+                    <label class="form-label" style="font-size: 0.7rem; margin-bottom: 0.2rem;">Fixed Time (IST)</label>
+                    <input type="time" id="autoStageOnCheckinTime" value="12:00" class="form-input" style="font-size: 0.78rem; padding: 0.35rem 0.5rem; font-family: monospace;">
+                  </div>
+                </div>
+
+                <div>
+                  <label class="form-label" style="font-size: 0.7rem; margin-bottom: 0.2rem;">Stored Template</label>
+                  <select id="autoStageOnCheckinTemplate" class="form-select" style="font-size: 0.8rem;">
+                    <!-- Populated dynamically from database -->
+                  </select>
+                  <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 0.3rem;" id="autoStageOnCheckinHint">
+                    Welcome &amp; Wi-Fi Details
+                  </div>
+                </div>
+              </div>
+
+              <!-- STAGE 3: ON CHECK-OUT DAY -->
+              <div class="stage-card" style="background: rgba(96, 165, 250, 0.03); border: 1px solid rgba(96, 165, 250, 0.25); border-radius: 8px; padding: 0.85rem; display: flex; flex-direction: column; gap: 0.6rem;">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                  <label style="display: flex; align-items: center; gap: 0.45rem; cursor: pointer; margin: 0; font-weight: 600; font-size: 0.84rem; color: #60a5fa;">
+                    <input type="checkbox" id="autoStageOnCheckoutEnabled" checked style="accent-color: #60a5fa; width: 16px; height: 16px;">
+                    <span>🧳 On Check-out Day</span>
+                  </label>
+                  <span class="badge" style="background: rgba(59,130,246,0.15); color: #60a5fa; font-size: 0.68rem;">Stage 3: Departure</span>
+                </div>
+
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem;">
+                  <div>
+                    <label class="form-label" style="font-size: 0.7rem; margin-bottom: 0.2rem;">Trigger Day</label>
+                    <div style="font-size: 0.76rem; font-weight: 500; color: #60a5fa; padding: 0.4rem 0.5rem; background: rgba(59,130,246,0.08); border: 1px solid rgba(59,130,246,0.2); border-radius: 4px; text-align: center;">
+                      Check-Out Day
+                    </div>
+                  </div>
+                  <div>
+                    <label class="form-label" style="font-size: 0.7rem; margin-bottom: 0.2rem;">Fixed Time (IST)</label>
+                    <input type="time" id="autoStageOnCheckoutTime" value="09:00" class="form-input" style="font-size: 0.78rem; padding: 0.35rem 0.5rem; font-family: monospace;">
+                  </div>
+                </div>
+
+                <div>
+                  <label class="form-label" style="font-size: 0.7rem; margin-bottom: 0.2rem;">Stored Template</label>
+                  <select id="autoStageOnCheckoutTemplate" class="form-select" style="font-size: 0.8rem;">
+                    <!-- Populated dynamically from database -->
+                  </select>
+                  <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 0.3rem;" id="autoStageOnCheckoutHint">
+                    Belongings &amp; Luggage Reminder
+                  </div>
+                </div>
+              </div>
+
+              <!-- STAGE 4: AFTER CHECK-OUT DAY -->
+              <div class="stage-card" style="background: rgba(245, 158, 11, 0.03); border: 1px solid rgba(245, 158, 11, 0.25); border-radius: 8px; padding: 0.85rem; display: flex; flex-direction: column; gap: 0.6rem;">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                  <label style="display: flex; align-items: center; gap: 0.45rem; cursor: pointer; margin: 0; font-weight: 600; font-size: 0.84rem; color: #f59e0b;">
+                    <input type="checkbox" id="autoStageAfterCheckoutEnabled" style="accent-color: #f59e0b; width: 16px; height: 16px;">
+                    <span>⭐ After Check-out</span>
+                  </label>
+                  <span class="badge" style="background: rgba(245,158,11,0.15); color: #f59e0b; font-size: 0.68rem;">Stage 4: Feedback</span>
+                </div>
+
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem;">
+                  <div>
+                    <label class="form-label" style="font-size: 0.7rem; margin-bottom: 0.2rem;">Trigger Day</label>
+                    <select id="autoStageAfterCheckoutOffset" class="form-select" style="font-size: 0.78rem; padding: 0.35rem 0.5rem;">
+                      <option value="1" selected>1 Day After</option>
+                      <option value="2">2 Days After</option>
+                      <option value="3">3 Days After</option>
+                      <option value="0">Same Day (Evening)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label class="form-label" style="font-size: 0.7rem; margin-bottom: 0.2rem;">Fixed Time (IST)</label>
+                    <input type="time" id="autoStageAfterCheckoutTime" value="18:00" class="form-input" style="font-size: 0.78rem; padding: 0.35rem 0.5rem; font-family: monospace;">
+                  </div>
+                </div>
+
+                <div>
+                  <label class="form-label" style="font-size: 0.7rem; margin-bottom: 0.2rem;">Stored Template</label>
+                  <select id="autoStageAfterCheckoutTemplate" class="form-select" style="font-size: 0.8rem;">
+                    <!-- Populated dynamically from database -->
+                  </select>
+                  <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 0.3rem;" id="autoStageAfterCheckoutHint">
+                    Thank You &amp; Review Link
+                  </div>
+                </div>
+              </div>
+
+            </div>
+          </div>
+        </div>
+
+        <!-- Metrics Strip -->
+        <div class="automation-metrics-strip" style="display: flex; gap: 0.75rem; margin-top: 1.25rem; flex-wrap: wrap;">
+          <div class="metric-pill" title="System Calendar Date (Timezone Synchronized)">
+            <span class="metric-pill-label">🗓️ Date</span>
+            <span class="metric-pill-val" id="metricAutoSystemToday" style="color: #60a5fa; font-family: monospace; font-size: 0.84rem;">--</span>
+          </div>
+          <div class="metric-pill" title="System Clock Time (Asia/Kolkata)">
+            <span class="metric-pill-label">⏰ Clock</span>
+            <span class="metric-pill-val" id="metricAutoSystemTime" style="color: #fcd34d; font-family: monospace; font-size: 0.84rem;">--</span>
+          </div>
+          <div class="metric-pill">
+            <span class="metric-pill-label">Total Bookings</span>
+            <span class="metric-pill-val" id="metricAutoTotal">0</span>
+          </div>
+          <div class="metric-pill">
+            <span class="metric-pill-label">🚗 Pre-Checkin Due</span>
+            <span class="metric-pill-val" id="metricAutoPreCheckinDue" style="color: #25d366;">0</span>
+          </div>
+          <div class="metric-pill">
+            <span class="metric-pill-label">🏨 Welcome Due</span>
+            <span class="metric-pill-val" id="metricAutoOnCheckinDue" style="color: #a78bfa;">0</span>
+          </div>
+          <div class="metric-pill">
+            <span class="metric-pill-label">🧳 Checkout Due</span>
+            <span class="metric-pill-val" id="metricAutoCheckoutDue" style="color: #60a5fa;">0</span>
+          </div>
+          <div class="metric-pill">
+            <span class="metric-pill-label">⭐ Review Due</span>
+            <span class="metric-pill-val" id="metricAutoAfterCheckoutDue" style="color: #f59e0b;">0</span>
+          </div>
+          <div class="metric-pill" title="Scheduled to send later today when fixed time arrives">
+            <span class="metric-pill-label">⏳ Scheduled Today</span>
+            <span class="metric-pill-val" id="metricAutoScheduledToday" style="color: #38bdf8;">0</span>
+          </div>
+          <div class="metric-pill">
+            <span class="metric-pill-label">Last Sync</span>
+            <span class="metric-pill-val" id="metricAutoLastSync" style="font-size: 0.82rem; font-weight: 500;">Never</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Live Sheet Preview Table Section -->
+      <section class="glass-panel" style="margin-bottom: 1.5rem;" id="sectionSheetPreview">
+        <div class="panel-header" style="justify-content: space-between;">
+          <div class="panel-title">
+            <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+              <line x1="3" y1="9" x2="21" y2="9"></line>
+              <line x1="9" y1="21" x2="9" y2="9"></line>
+            </svg>
+            <span>Live Sheet Bookings &amp; 4-Stage Trigger Queue</span>
+          </div>
+          <span style="font-size: 0.78rem; color: var(--text-muted);" id="autoDetectedColumnsSummary">
+            Columns: Auto-detecting...
+          </span>
+        </div>
+
+        <div class="table-container" style="max-height: 420px; overflow-y: auto;">
+          <table class="custom-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Guest Name</th>
+                <th>Phone Number</th>
+                <th>Check-In Date</th>
+                <th>Check-Out Date</th>
+                <th>Property</th>
+                <th>🚗 Pre-Checkin</th>
+                <th>🏨 Welcome</th>
+                <th>🧳 Checkout</th>
+                <th>⭐ Review</th>
+              </tr>
+            </thead>
+            <tbody id="autoBookingsTableBody">
+              <tr>
+                <td colspan="10" style="text-align: center; color: var(--text-muted); padding: 2.5rem;">
+                  Paste your Google Sheet URL above and click <strong>"🔍 Inspect Sheet"</strong> to preview live bookings and trigger statuses.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Automated Dispatches Audit Trail -->
+      <section class="glass-panel">
+        <div class="panel-header" style="justify-content: space-between;">
+          <div class="panel-title">
+            <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path d="M12 8v4l3 3"></path>
+              <circle cx="12" cy="12" r="9"></circle>
+            </svg>
+            <span>Automated Dispatches History</span>
+          </div>
+          <button class="btn btn-secondary btn-sm" id="btnRefreshAutoHistory" title="Refresh audit log">
+            Refresh Log
+          </button>
+        </div>
+
+        <div class="table-container" style="max-height: 320px; overflow-y: auto;">
+          <table class="custom-table">
+            <thead>
+              <tr>
+                <th>Dispatched At</th>
+                <th>Guest Name</th>
+                <th>Phone</th>
+                <th>Trigger Event</th>
+                <th>Template Used</th>
+                <th>Status</th>
+                <th>Meta Message ID</th>
+              </tr>
+            </thead>
+            <tbody id="autoHistoryTableBody">
+              <tr>
+                <td colspan="7" style="text-align: center; color: var(--text-muted); padding: 2rem;">
+                  No automated booking messages sent yet.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
   </main>
 
   <!-- Settings Modal -->
@@ -737,6 +1134,22 @@ KonkanTrip Partner Team</textarea>
           <input type="text" id="settingTemplateName" class="form-input" placeholder="kt_invitation_" value="kt_invitation_">
           <span style="font-size: 0.72rem; color: var(--text-muted);">Meta Template Name</span>
         </div>
+      </div>
+
+      <div class="form-group" style="margin-bottom: 1.5rem;">
+        <label class="form-label" for="settingAppTimezone">Application &amp; Deployment Timezone</label>
+        <select id="settingAppTimezone" class="form-select" style="font-size: 0.85rem;">
+          <option value="Asia/Kolkata" selected>Asia/Kolkata (IST • UTC+05:30) - India</option>
+          <option value="Asia/Dubai">Asia/Dubai (GST • UTC+04:00) - UAE / Gulf</option>
+          <option value="UTC">UTC (GMT • UTC+00:00) - Cloud Standard</option>
+          <option value="Europe/London">Europe/London (BST/GMT • UTC+01:00) - UK</option>
+          <option value="America/New_York">America/New_York (EST/EDT • UTC-05:00) - US East</option>
+          <option value="America/Los_Angeles">America/Los_Angeles (PST/PDT • UTC-08:00) - US West</option>
+          <option value="Asia/Singapore">Asia/Singapore (SGT • UTC+08:00) - Singapore</option>
+        </select>
+        <span style="font-size: 0.72rem; color: var(--text-muted);">
+          Synchronizes campaign scheduling and booking triggers accurately across local environments and cloud deployments (AWS, Docker, Render).
+        </span>
       </div>
 
       <!-- Test Connection Feedback Area -->
