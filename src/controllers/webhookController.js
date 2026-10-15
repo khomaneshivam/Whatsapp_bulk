@@ -203,6 +203,7 @@ function listReplies(req, res) {
     return res.status(200).json({
       success: true,
       data: result.replies,
+      replies: result.replies,
       pagination: {
         total: result.totalCount,
         limit: result.limit,

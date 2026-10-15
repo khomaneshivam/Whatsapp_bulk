@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { 
   MessageSquare, 
@@ -6,7 +6,10 @@ import {
   RefreshCw, 
   CheckCheck,
   Search,
-  ShieldCheck
+  ShieldCheck,
+  User,
+  Clock,
+  Sparkles
 } from 'lucide-react';
 
 export default function InboxPage() {
@@ -17,44 +20,129 @@ export default function InboxPage() {
   const [sendingReply, setSendingReply] = useState(false);
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
+  const messagesEndRef = useRef(null);
 
   useEffect(() => {
     loadInbox();
-  }, []);
+    // Live auto-refresh polling every 8 seconds
+    const interval = setInterval(() => {
+      loadInbox(true);
+    }, 8000);
+    return () => clearInterval(interval);
+  }, [token]);
 
-  async function loadInbox() {
-    setLoading(true);
+  useEffect(() => {
+    if (selectedConvo?.messages?.length) {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [selectedConvo?.phone, selectedConvo?.messages?.length]);
+
+  async function loadInbox(silent = false) {
+    if (!silent) setLoading(true);
     try {
       const res = await fetch('/api/inbox/replies', {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       const data = await res.json();
-      if (data.success && data.replies) {
+      const rawList = data.replies || data.data || [];
+
+      if (data.success && Array.isArray(rawList)) {
         // Group by phone number
         const convos = {};
-        data.replies.forEach(r => {
+
+        rawList.forEach(r => {
           const phoneKey = r.from_phone;
+          if (!phoneKey) return;
+
+          const rawName = r.customer_name || r.contact_name;
+          const guestName = (rawName && rawName !== 'Customer' && rawName !== 'Demo Customer') ? rawName : null;
+
           if (!convos[phoneKey]) {
             convos[phoneKey] = {
               phone: phoneKey,
-              name: r.contact_name || 'Guest',
-              lastMessage: r.message_text,
+              name: guestName || 'Guest',
+              lastMessage: '',
               lastTime: r.received_at,
+              unreadCount: 0,
               messages: []
             };
+          } else if (guestName && convos[phoneKey].name === 'Guest') {
+            convos[phoneKey].name = guestName;
           }
-          convos[phoneKey].messages.push(r);
+
+          if (r.is_read === 0) {
+            convos[phoneKey].unreadCount += 1;
+          }
+
+          const isOutbound = r.message_type === 'outbound';
+          const incomingText = r.message_body || r.message_text || '';
+
+          if (isOutbound) {
+            convos[phoneKey].messages.push({
+              id: r.id || `out_${Math.random()}`,
+              from_phone: 'Agent',
+              text: incomingText || r.reply_text || '',
+              time: r.received_at,
+              is_outbound: true,
+              status: r.reply_status || 'SENT'
+            });
+          } else {
+            if (incomingText) {
+              convos[phoneKey].messages.push({
+                id: r.id,
+                from_phone: r.from_phone,
+                text: incomingText,
+                time: r.received_at,
+                is_outbound: false,
+                is_read: r.is_read
+              });
+            }
+
+            if (r.reply_text) {
+              convos[phoneKey].messages.push({
+                id: `${r.id}_reply`,
+                from_phone: 'Agent',
+                text: r.reply_text,
+                time: r.reply_sent_at || r.received_at,
+                is_outbound: true,
+                status: r.reply_status || 'SENT',
+                is_auto: r.reply_status === 'AUTO_REPLIED'
+              });
+            }
+          }
         });
-        const list = Object.values(convos);
-        setConversations(list);
-        if (list.length > 0 && !selectedConvo) {
-          setSelectedConvo(list[0]);
-        }
+
+        // Sort messages chronologically (oldest at top, newest at bottom)
+        Object.values(convos).forEach(c => {
+          c.messages.sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime());
+          if (c.messages.length > 0) {
+            const last = c.messages[c.messages.length - 1];
+            c.lastMessage = last.is_outbound ? `You: ${last.text}` : last.text;
+            c.lastTime = last.time;
+          }
+        });
+
+        // Sort conversations by newest activity first
+        const sortedConvos = Object.values(convos).sort(
+          (a, b) => new Date(b.lastTime).getTime() - new Date(a.lastTime).getTime()
+        );
+
+        setConversations(sortedConvos);
+
+        // Keep current selection updated or select first on initial load
+        setSelectedConvo(prev => {
+          if (!prev && sortedConvos.length > 0) return sortedConvos[0];
+          if (prev) {
+            const updated = sortedConvos.find(c => c.phone === prev.phone);
+            return updated || prev;
+          }
+          return null;
+        });
       }
     } catch (err) {
       console.error('Failed to load inbox:', err);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }
 
@@ -62,7 +150,9 @@ export default function InboxPage() {
     e.preventDefault();
     if (!replyText.trim() || !selectedConvo) return;
 
+    const textToSend = replyText.trim();
     setSendingReply(true);
+
     try {
       const res = await fetch('/api/inbox/reply', {
         method: 'POST',
@@ -72,31 +162,47 @@ export default function InboxPage() {
         },
         body: JSON.stringify({
           to: selectedConvo.phone,
-          message: replyText
+          message: textToSend
         })
       });
       const data = await res.json();
       if (data.success) {
-        selectedConvo.messages.push({
+        const newMsg = {
+          id: `out_${Date.now()}`,
           from_phone: 'Agent',
-          message_text: replyText,
-          received_at: new Date().toISOString(),
-          is_outbound: true
-        });
+          text: textToSend,
+          time: new Date().toISOString(),
+          is_outbound: true,
+          status: 'SENT'
+        };
+
+        const updatedMessages = [...selectedConvo.messages, newMsg];
+        const updatedConvo = {
+          ...selectedConvo,
+          messages: updatedMessages,
+          lastMessage: `You: ${textToSend}`,
+          lastTime: newMsg.time
+        };
+
+        setSelectedConvo(updatedConvo);
+        setConversations(prev =>
+          prev.map(c => (c.phone === selectedConvo.phone ? updatedConvo : c))
+        );
         setReplyText('');
       } else {
         alert(data.message || 'Failed to send reply');
       }
     } catch (err) {
-      alert(err.message);
+      alert(err.message || 'Failed to dispatch reply');
     } finally {
       setSendingReply(false);
     }
   }
 
   const filteredConvos = conversations.filter(c => 
-    c.name.toLowerCase().includes(search.toLowerCase()) || 
-    c.phone.includes(search)
+    (c.name || '').toLowerCase().includes(search.toLowerCase()) || 
+    (c.phone || '').includes(search) ||
+    (c.lastMessage || '').toLowerCase().includes(search.toLowerCase())
   );
 
   return (
@@ -104,17 +210,20 @@ export default function InboxPage() {
       {/* Page Header */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '24px', flexWrap: 'wrap', gap: '14px' }}>
         <div>
-          <h1 style={{ fontSize: '1.65rem', fontWeight: 800, color: '#0F172A', letterSpacing: '-0.02em' }}>
-            2-Way Customer Inbox
+          <h1 style={{ fontSize: '1.65rem', fontWeight: 800, color: '#0F172A', letterSpacing: '-0.02em', display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <span>2-Way Customer Inbox</span>
+            <span style={{ fontSize: '0.8rem', fontWeight: 600, background: '#DCFCE7', color: '#15803D', padding: '2px 10px', borderRadius: '12px', border: '1px solid #BBF7D0' }}>
+              Live Sync
+            </span>
           </h1>
           <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', marginTop: '4px' }}>
-            Inbound WhatsApp replies and real-time customer conversation history captured via Meta webhooks.
+            Live WhatsApp customer conversations captured via Meta webhook. Read incoming guest messages and reply instantly.
           </p>
         </div>
 
-        <button onClick={loadInbox} className="btn btn-secondary" style={{ gap: '6px' }}>
+        <button onClick={() => loadInbox(false)} className="btn btn-secondary" style={{ gap: '6px' }} disabled={loading}>
           <RefreshCw size={15} className={loading ? 'pulse-glow' : ''} />
-          <span>Refresh Inbox</span>
+          <span>{loading ? 'Syncing...' : 'Refresh Inbox'}</span>
         </button>
       </div>
 
@@ -123,7 +232,7 @@ export default function InboxPage() {
         display: 'grid',
         gridTemplateColumns: 'minmax(320px, 380px) minmax(0, 1fr)',
         gap: '20px',
-        height: '700px',
+        height: '720px',
         background: '#FFFFFF',
         border: '1px solid var(--border-color)',
         borderRadius: '14px',
@@ -142,7 +251,7 @@ export default function InboxPage() {
             <div style={{ position: 'relative' }}>
               <input
                 type="text"
-                placeholder="Search by guest name or number..."
+                placeholder="Search guest name, phone, message..."
                 className="saas-input"
                 value={search}
                 onChange={e => setSearch(e.target.value)}
@@ -156,15 +265,21 @@ export default function InboxPage() {
           <div style={{ flex: 1, overflowY: 'auto' }}>
             {filteredConvos.length === 0 ? (
               <div style={{ padding: '40px 20px', textAlign: 'center', color: '#94A3B8', fontSize: '0.85rem' }}>
-                <MessageSquare size={32} color="#CBD5E1" style={{ margin: '0 auto 10px auto' }} />
-                <div style={{ fontWeight: 600, color: '#475569' }}>No conversations found</div>
-                <div style={{ fontSize: '0.75rem', marginTop: '4px' }}>
-                  Inbound customer replies via Meta webhook will display here automatically.
+                <MessageSquare size={36} color="#CBD5E1" style={{ margin: '0 auto 12px auto' }} />
+                <div style={{ fontWeight: 600, color: '#475569' }}>
+                  {loading ? 'Loading conversations...' : 'No conversations found'}
+                </div>
+                <div style={{ fontSize: '0.75rem', marginTop: '4px', lineHeight: 1.4 }}>
+                  {loading 
+                    ? 'Syncing customer replies from WhatsApp...' 
+                    : 'When guests reply to your WhatsApp broadcasts or send messages to your WABA number, they appear here automatically.'}
                 </div>
               </div>
             ) : (
               filteredConvos.map(c => {
                 const isSelected = selectedConvo?.phone === c.phone;
+                const initials = (c.name || c.phone || 'G').substring(0, 2).toUpperCase();
+
                 return (
                   <div
                     key={c.phone}
@@ -176,31 +291,68 @@ export default function InboxPage() {
                       cursor: 'pointer',
                       transition: 'all 0.15s ease',
                       borderLeft: isSelected ? '4px solid var(--brand-wa)' : '4px solid transparent',
-                      boxShadow: isSelected ? 'var(--shadow-xs)' : 'none'
+                      boxShadow: isSelected ? 'var(--shadow-xs)' : 'none',
+                      display: 'flex',
+                      gap: '12px',
+                      alignItems: 'center'
                     }}
                   >
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '4px' }}>
-                      <span style={{ fontWeight: 700, color: isSelected ? '#0F172A' : '#334155', fontSize: '0.875rem' }}>
-                        {c.name}
-                      </span>
-                      <span style={{ fontSize: '0.7rem', color: '#94A3B8' }}>
-                        {c.lastTime ? new Date(c.lastTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
-                      </span>
-                    </div>
-
-                    <div style={{ fontSize: '0.75rem', fontFamily: 'var(--font-mono)', color: '#64748B', marginBottom: '4px' }}>
-                      {c.phone}
-                    </div>
-
+                    {/* Avatar */}
                     <div style={{
-                      fontSize: '0.8rem',
-                      color: isSelected ? '#334155' : '#64748B',
-                      whiteSpace: 'nowrap',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis'
+                      width: '40px',
+                      height: '40px',
+                      borderRadius: '50%',
+                      background: isSelected ? '#DCFCE7' : '#F1F5F9',
+                      border: `1px solid ${isSelected ? '#BBF7D0' : '#E2E8F0'}`,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      color: isSelected ? '#15803D' : '#475569',
+                      fontWeight: 700,
+                      fontSize: '0.85rem',
+                      flexShrink: 0
                     }}>
-                      {c.lastMessage}
+                      {initials}
                     </div>
+
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '2px' }}>
+                        <span style={{ fontWeight: 700, color: isSelected ? '#0F172A' : '#334155', fontSize: '0.875rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {c.name}
+                        </span>
+                        <span style={{ fontSize: '0.7rem', color: '#94A3B8', flexShrink: 0, marginLeft: '6px' }}>
+                          {c.lastTime ? new Date(c.lastTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
+                        </span>
+                      </div>
+
+                      <div style={{ fontSize: '0.75rem', fontFamily: 'var(--font-mono)', color: '#64748B', marginBottom: '2px' }}>
+                        +{c.phone}
+                      </div>
+
+                      <div style={{
+                        fontSize: '0.78rem',
+                        color: isSelected ? '#334155' : '#64748B',
+                        whiteSpace: 'nowrap',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis'
+                      }}>
+                        {c.lastMessage || 'No messages'}
+                      </div>
+                    </div>
+
+                    {c.unreadCount > 0 && (
+                      <span style={{
+                        background: 'var(--brand-wa)',
+                        color: '#FFFFFF',
+                        fontSize: '0.7rem',
+                        fontWeight: 700,
+                        padding: '2px 7px',
+                        borderRadius: '10px',
+                        flexShrink: 0
+                      }}>
+                        {c.unreadCount}
+                      </span>
+                    )}
                   </div>
                 );
               })
@@ -223,8 +375,8 @@ export default function InboxPage() {
               }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                   <div style={{
-                    width: '38px',
-                    height: '38px',
+                    width: '42px',
+                    height: '42px',
                     borderRadius: '50%',
                     background: '#DCFCE7',
                     border: '1px solid #BBF7D0',
@@ -233,21 +385,23 @@ export default function InboxPage() {
                     justifyContent: 'center',
                     color: '#15803D',
                     fontWeight: 800,
-                    fontSize: '0.85rem'
+                    fontSize: '0.9rem'
                   }}>
-                    {selectedConvo.name.substring(0, 2).toUpperCase()}
+                    {(selectedConvo.name || selectedConvo.phone || 'G').substring(0, 2).toUpperCase()}
                   </div>
                   <div>
-                    <h3 style={{ fontSize: '0.95rem', fontWeight: 800, color: '#0F172A' }}>{selectedConvo.name}</h3>
-                    <div style={{ fontSize: '0.75rem', color: '#64748B', fontFamily: 'var(--font-mono)' }}>
-                      {selectedConvo.phone}
+                    <h3 style={{ fontSize: '1rem', fontWeight: 800, color: '#0F172A', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span>{selectedConvo.name}</span>
+                    </h3>
+                    <div style={{ fontSize: '0.78rem', color: '#64748B', fontFamily: 'var(--font-mono)' }}>
+                      +{selectedConvo.phone}
                     </div>
                   </div>
                 </div>
 
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <span className="badge badge-success" style={{ fontSize: '0.7rem' }}>
-                    <ShieldCheck size={12} /> WhatsApp Verified User
+                  <span className="badge badge-success" style={{ fontSize: '0.725rem', gap: '5px' }}>
+                    <ShieldCheck size={13} /> WhatsApp Verified User
                   </span>
                 </div>
               </div>
@@ -264,9 +418,11 @@ export default function InboxPage() {
               }}>
                 {selectedConvo.messages.map((m, idx) => {
                   const isOutbound = m.is_outbound;
+                  const displayTime = m.time ? new Date(m.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+
                   return (
                     <div
-                      key={idx}
+                      key={m.id || idx}
                       style={{
                         maxWidth: '75%',
                         alignSelf: isOutbound ? 'flex-end' : 'flex-start',
@@ -279,8 +435,14 @@ export default function InboxPage() {
                         wordWrap: 'break-word'
                       }}
                     >
+                      {m.is_auto && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.7rem', fontWeight: 700, color: '#16A34A', marginBottom: '4px' }}>
+                          <Sparkles size={11} /> Auto-Reply Bot
+                        </div>
+                      )}
+
                       <div style={{ fontSize: '0.875rem', lineHeight: 1.45, whiteSpace: 'pre-wrap' }}>
-                        {m.message_text}
+                        {m.text || m.message_body || m.message_text || ''}
                       </div>
 
                       <div style={{
@@ -292,12 +454,13 @@ export default function InboxPage() {
                         color: '#64748B',
                         marginTop: '4px'
                       }}>
-                        <span>{new Date(m.received_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                        <span>{displayTime}</span>
                         {isOutbound && <CheckCheck size={13} color="#2563EB" />}
                       </div>
                     </div>
                   );
                 })}
+                <div ref={messagesEndRef} />
               </div>
 
               {/* Reply Input Form */}
@@ -313,7 +476,7 @@ export default function InboxPage() {
               >
                 <input
                   type="text"
-                  placeholder="Type an official WhatsApp reply message..."
+                  placeholder={`Reply directly to ${selectedConvo.name} on WhatsApp...`}
                   className="saas-input"
                   value={replyText}
                   onChange={e => setReplyText(e.target.value)}
@@ -321,11 +484,12 @@ export default function InboxPage() {
                 />
                 <button
                   type="submit"
-                  disabled={sendingReply}
+                  disabled={sendingReply || !replyText.trim()}
                   className="btn btn-action-green"
+                  style={{ gap: '6px' }}
                 >
                   <Send size={15} />
-                  <span>{sendingReply ? 'Sending...' : 'Send'}</span>
+                  <span>{sendingReply ? 'Sending...' : 'Send Reply'}</span>
                 </button>
               </form>
             </>
@@ -338,9 +502,11 @@ export default function InboxPage() {
               justifyContent: 'center',
               color: '#94A3B8'
             }}>
-              <MessageSquare size={40} color="#CBD5E1" style={{ marginBottom: '12px' }} />
-              <div style={{ fontWeight: 600, color: '#475569' }}>Select a conversation</div>
-              <div style={{ fontSize: '0.8rem', marginTop: '4px' }}>Choose a customer on the left to read and send replies.</div>
+              <MessageSquare size={44} color="#CBD5E1" style={{ marginBottom: '14px' }} />
+              <div style={{ fontWeight: 700, color: '#334155', fontSize: '1rem' }}>Select a customer conversation</div>
+              <div style={{ fontSize: '0.825rem', marginTop: '4px', maxWidth: '320px', textAlign: 'center' }}>
+                Pick a chat from the left panel to review message history and dispatch instant WhatsApp replies.
+              </div>
             </div>
           )}
         </div>
