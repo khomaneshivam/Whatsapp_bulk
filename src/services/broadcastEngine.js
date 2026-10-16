@@ -30,15 +30,54 @@ class BroadcastEngine extends EventEmitter {
   /**
    * Builds template components array from mapping configuration
    */
-  buildTemplateComponents(mappingConfig, rowData, templateName = "") {
+  buildTemplateComponents(mappingConfig = {}, rowData = {}, templateName = "") {
     const cleanTplName = String(templateName || "").trim().toLowerCase();
     const components = [];
 
-    // If no mappingConfig or empty bodyParams, return empty array (0 parameters)
-    const bodyParams = mappingConfig?.bodyParams;
-    if (!bodyParams || (Array.isArray(bodyParams) && bodyParams.length === 0)) {
-      return [];
+    // 1. Fetch template details from SQLite to inspect components (header, body, buttons)
+    let tplRow = null;
+    try {
+      tplRow = db.prepare("SELECT * FROM templates WHERE name = ? OR meta_id = ? OR id = ? LIMIT 1").get(templateName, templateName, templateName);
+    } catch (e) {}
+
+    let tplComponents = [];
+    if (tplRow && tplRow.components) {
+      try {
+        tplComponents = JSON.parse(tplRow.components);
+      } catch (e) {}
     }
+
+    // 2. Process HEADER component if required by template or provided by user
+    const headerComp = tplComponents.find(c => String(c.type || "").toUpperCase() === "HEADER");
+    let headerMediaUrl = (mappingConfig?.headerMediaUrl || "").trim();
+    let headerFormat = "IMAGE";
+
+    if (headerComp) {
+      headerFormat = (headerComp.format || "IMAGE").toUpperCase();
+      if (!headerMediaUrl) {
+        headerMediaUrl = headerComp.example?.header_handle?.[0] || "";
+      }
+    }
+
+    if (headerMediaUrl && (headerComp || mappingConfig?.headerMediaUrl)) {
+      const mediaType = headerFormat.toLowerCase(); // "image", "document", "video"
+      if (["image", "document", "video"].includes(mediaType)) {
+        components.push({
+          type: "header",
+          parameters: [
+            {
+              type: mediaType,
+              [mediaType]: {
+                link: headerMediaUrl
+              }
+            }
+          ]
+        });
+      }
+    }
+
+    // 3. Process BODY parameters
+    const bodyParams = mappingConfig?.bodyParams;
 
     // Specific smart handling for kt_invitation_ (1059862786867912)
     if (cleanTplName === "kt_invitation_" || cleanTplName === "1059862786867912" || cleanTplName.includes("invitation")) {
@@ -87,7 +126,7 @@ class BroadcastEngine extends EventEmitter {
       return components;
     }
 
-    // Generic dynamic parameter builder for ANY template number or name
+    // Generic dynamic parameter builder for ANY template
     if (Array.isArray(bodyParams) && bodyParams.length > 0) {
       const isNamed = mappingConfig.parameterFormat === "NAMED";
       const paramKeys = mappingConfig.paramKeys || [];
@@ -95,7 +134,26 @@ class BroadcastEngine extends EventEmitter {
       const parameters = bodyParams.map((param, index) => {
         let col = typeof param === "object" ? param.col : param;
         let key = typeof param === "object" ? param.key : (paramKeys[index] || String(index + 1));
-        let val = (col && rowData[col] !== undefined) ? String(rowData[col]).trim() : "";
+        let val = "";
+
+        if (col && rowData[col] !== undefined) {
+          val = String(rowData[col]).trim();
+        } else if (col) {
+          const foundKey = Object.keys(rowData).find(k => k.trim().toLowerCase() === String(col).trim().toLowerCase());
+          if (foundKey && rowData[foundKey] !== undefined) {
+            val = String(rowData[foundKey]).trim();
+          }
+        }
+
+        // Smart fallback if variable column was unmapped or empty
+        if (!val) {
+          const cleanKey = String(key).toLowerCase();
+          if (cleanKey === "1" || /name|guest|customer/i.test(cleanKey)) {
+            val = rowData.Name || rowData.name || rowData["Full Name"] || rowData.guest || "";
+          } else if (cleanKey === "2" || /restaurant|property|resort/i.test(cleanKey)) {
+            val = rowData.Restaurant || rowData.restaurant || rowData.Property || rowData.property || "";
+          }
+        }
 
         if (!val) {
           val = "—";
@@ -130,6 +188,35 @@ class BroadcastEngine extends EventEmitter {
           ]
         });
       }
+    } else if (tplRow && tplRow.variables) {
+      // Auto-fallback: if template has variables in DB, auto-populate them from rowData
+      try {
+        const vars = JSON.parse(tplRow.variables);
+        if (Array.isArray(vars) && vars.length > 0) {
+          const parameters = vars.map((v, idx) => {
+            const varKey = String(v.key || idx + 1);
+            let val = "";
+            if (varKey === "1" || /name/i.test(v.name || "")) {
+              val = rowData.Name || rowData.name || rowData["Full Name"] || "";
+            } else if (varKey === "2" || /property|resort|restaurant/i.test(v.name || "")) {
+              val = rowData.Property || rowData.property || rowData.Restaurant || rowData.restaurant || "";
+            } else if (varKey === "3" || /link|url/i.test(v.name || "")) {
+              val = rowData.Link || rowData.link || rowData.URL || "";
+            }
+            if (!val && v.example) val = String(v.example);
+            if (!val) val = "—";
+
+            const pObj = { type: "text", text: val };
+            if (!/^\d+$/.test(varKey)) pObj.parameter_name = varKey;
+            return pObj;
+          });
+
+          components.push({
+            type: "body",
+            parameters: parameters
+          });
+        }
+      } catch (e) {}
     }
 
     return components;
@@ -157,6 +244,16 @@ class BroadcastEngine extends EventEmitter {
     }
 
     const resolvedDelay = (campaign.delay_ms !== undefined && campaign.delay_ms !== null) ? campaign.delay_ms : 250;
+
+    // Check pending vs failed recipients for retry support
+    const pendingCount = db.prepare("SELECT COUNT(*) as c FROM campaign_recipients WHERE campaign_id = ? AND status = 'PENDING'").get(campaignId).c;
+    if (pendingCount === 0) {
+      const failedCount = db.prepare("SELECT COUNT(*) as c FROM campaign_recipients WHERE campaign_id = ? AND status = 'FAILED'").get(campaignId).c;
+      if (failedCount > 0) {
+        db.prepare("UPDATE campaign_recipients SET status = 'PENDING', error_message = NULL WHERE campaign_id = ? AND status = 'FAILED'").run(campaignId);
+        db.prepare("UPDATE campaigns SET failed_count = 0 WHERE id = ?").run(campaignId);
+      }
+    }
 
     const jobState = {
       paused: false,

@@ -914,12 +914,36 @@ class BookingAutomationService {
       return pObj;
     });
 
-    return [
-      {
-        type: "body",
-        parameters
+    const components = [];
+
+    // Header check
+    let tplComponents = [];
+    if (tRow && tRow.components) {
+      try { tplComponents = JSON.parse(tRow.components); } catch (e) {}
+    }
+    const headerComp = tplComponents.find(c => String(c.type || "").toUpperCase() === "HEADER");
+    if (headerComp) {
+      const mediaFormat = (headerComp.format || "IMAGE").toLowerCase();
+      const mediaUrl = headerComp.example?.header_handle?.[0] || "";
+      if (mediaUrl && ["image", "document", "video"].includes(mediaFormat)) {
+        components.push({
+          type: "header",
+          parameters: [
+            {
+              type: mediaFormat,
+              [mediaFormat]: { link: mediaUrl }
+            }
+          ]
+        });
       }
-    ];
+    }
+
+    components.push({
+      type: "body",
+      parameters
+    });
+
+    return components;
   }
 
   /**
