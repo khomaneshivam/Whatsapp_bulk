@@ -494,19 +494,27 @@ export default function BroadcastPage() {
           const type = (payload.type || payload.TYPE || '').toUpperCase();
           
           if (type === 'PROGRESS') {
+            const isSent = (payload.status || '').toUpperCase() === 'SENT';
+            const isFailed = (payload.status || '').toUpperCase() === 'FAILED';
             setProgressStats(prev => ({
               ...prev,
-              sent: payload.sent !== undefined ? payload.sent : prev.sent,
-              failed: payload.failed !== undefined ? payload.failed : prev.failed,
+              sent: payload.sent !== undefined ? payload.sent : (isSent ? prev.sent + 1 : prev.sent),
+              failed: payload.failed !== undefined ? payload.failed : (isFailed ? prev.failed + 1 : prev.failed),
               total: payload.total !== undefined ? payload.total : prev.total,
               status: payload.status || prev.status
             }));
             if (payload.delayMs !== undefined) {
               setLiveDelay(payload.delayMs);
             }
-            if (payload.lastRecipient) {
+            const recipientLabel = payload.lastRecipient || payload.name || payload.phone;
+            if (recipientLabel) {
               setStreamLogs(prev => [
-                { time: new Date().toLocaleTimeString(), text: `Sent to ${payload.lastRecipient} (Meta ID: ${payload.metaMessageId || 'OK'})` },
+                {
+                  time: new Date().toLocaleTimeString(),
+                  text: isSent
+                    ? `✅ Sent to ${recipientLabel} (${payload.metaMessageId || 'Meta Accepted'})`
+                    : `❌ Failed to ${recipientLabel}: ${payload.error || 'Dispatch error'}`
+                },
                 ...prev.slice(0, 50)
               ]);
             }
@@ -520,7 +528,13 @@ export default function BroadcastPage() {
             }
           } else if (type === 'STATUS') {
             if (payload.status) {
-              setProgressStats(prev => ({ ...prev, status: payload.status }));
+              setProgressStats(prev => ({
+                ...prev,
+                status: payload.status,
+                sent: payload.sent !== undefined ? payload.sent : prev.sent,
+                failed: payload.failed !== undefined ? payload.failed : prev.failed,
+                total: payload.total !== undefined ? payload.total : prev.total
+              }));
               setCampaignPaused(payload.status === 'PAUSED');
               setStreamLogs(prev => [
                 { time: new Date().toLocaleTimeString(), text: `Status update: ${payload.status} - ${payload.message || ''}` },
@@ -528,7 +542,12 @@ export default function BroadcastPage() {
               ]);
             }
           } else if (type === 'COMPLETED') {
-            setProgressStats(prev => ({ ...prev, status: 'COMPLETED' }));
+            setProgressStats(prev => ({
+              ...prev,
+              status: 'COMPLETED',
+              sent: payload.sent !== undefined ? payload.sent : prev.sent,
+              failed: payload.failed !== undefined ? payload.failed : prev.failed
+            }));
             setStreamLogs(prev => [
               { time: new Date().toLocaleTimeString(), text: '🎉 All messages dispatched to Meta Cloud API successfully!' },
               ...prev
@@ -1334,208 +1353,80 @@ export default function BroadcastPage() {
                 </div>
               )}
 
-              {/* Header Media Manager (Image / Document / Video) */}
+              {/* Header Media URL (Image / Document / Video) */}
               {selectedTemplate?.components?.some(c => c.type === 'HEADER' && c.format !== 'TEXT') && (() => {
                 const headerComp = selectedTemplate.components.find(c => c.type === 'HEADER');
                 const mediaFormat = (headerComp?.format || 'IMAGE').toUpperCase();
                 const templateExampleUrl = headerComp?.example?.header_handle?.[0] || '';
 
                 return (
-                  <div style={{
-                    marginBottom: '24px',
-                    background: '#F8FAFC',
-                    border: '1px solid var(--border-color)',
-                    borderRadius: '12px',
-                    padding: '18px'
-                  }}>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <ImageIcon size={18} color="var(--brand-wa)" />
-                        <span style={{ fontSize: '0.9rem', fontWeight: 700, color: '#0F172A' }}>
-                          Template Header Media ({mediaFormat})
-                        </span>
-                        <span className="badge badge-success" style={{ fontSize: '0.7rem' }}>
-                          Meta Required
-                        </span>
-                      </div>
+                  <div style={{ marginBottom: '20px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
+                      <label style={{ fontSize: '0.8rem', fontWeight: 600, color: '#334155', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <ImageIcon size={15} color="var(--brand-wa)" />
+                        <span>Header Media URL ({mediaFormat})</span>
+                        <span className="badge badge-success" style={{ fontSize: '0.65rem' }}>Meta Required</span>
+                      </label>
 
-                      {/* Source Selection Buttons */}
-                      <div style={{ display: 'flex', background: '#E2E8F0', padding: '3px', borderRadius: '8px', gap: '4px' }}>
-                        <button
-                          type="button"
-                          onClick={() => setMediaSourceTab('upload')}
-                          style={{
-                            padding: '4px 10px',
-                            fontSize: '0.75rem',
-                            fontWeight: 600,
-                            borderRadius: '6px',
-                            border: 'none',
-                            background: mediaSourceTab === 'upload' ? '#FFFFFF' : 'transparent',
-                            color: mediaSourceTab === 'upload' ? '#0F172A' : '#64748B',
-                            cursor: 'pointer',
-                            boxShadow: mediaSourceTab === 'upload' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none'
-                          }}
-                        >
-                          Upload File
-                        </button>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                         {templateExampleUrl && (
                           <button
                             type="button"
                             onClick={() => {
-                              setMediaSourceTab('default');
                               setHeaderMediaUrl(templateExampleUrl);
                               setHeaderMediaId('');
                             }}
-                            style={{
-                              padding: '4px 10px',
-                              fontSize: '0.75rem',
-                              fontWeight: 600,
-                              borderRadius: '6px',
-                              border: 'none',
-                              background: mediaSourceTab === 'default' ? '#FFFFFF' : 'transparent',
-                              color: mediaSourceTab === 'default' ? '#0F172A' : '#64748B',
-                              cursor: 'pointer',
-                              boxShadow: mediaSourceTab === 'default' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none'
-                            }}
+                            className="btn btn-secondary"
+                            style={{ padding: '2px 8px', fontSize: '0.72rem' }}
                           >
-                            Template Default
+                            Use Template Default
                           </button>
                         )}
-                        <button
-                          type="button"
-                          onClick={() => setMediaSourceTab('url')}
-                          style={{
-                            padding: '4px 10px',
-                            fontSize: '0.75rem',
-                            fontWeight: 600,
-                            borderRadius: '6px',
-                            border: 'none',
-                            background: mediaSourceTab === 'url' ? '#FFFFFF' : 'transparent',
-                            color: mediaSourceTab === 'url' ? '#0F172A' : '#64748B',
-                            cursor: 'pointer',
-                            boxShadow: mediaSourceTab === 'url' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none'
-                          }}
-                        >
-                          Web URL
-                        </button>
+                        <label className="btn btn-secondary" style={{ padding: '2px 8px', fontSize: '0.72rem', cursor: 'pointer', margin: 0 }}>
+                          <span>{uploadingMedia ? 'Uploading...' : '📁 Upload File'}</span>
+                          <input
+                            type="file"
+                            accept="image/*,application/pdf,video/mp4"
+                            onChange={handleMediaFileUpload}
+                            disabled={uploadingMedia}
+                            style={{ display: 'none' }}
+                          />
+                        </label>
                       </div>
                     </div>
 
-                    {/* Tab 1: Direct File Upload */}
-                    {mediaSourceTab === 'upload' && (
-                      <div>
-                        <div style={{
-                          border: '2px dashed #CBD5E1',
-                          borderRadius: '10px',
-                          padding: '20px',
-                          textAlign: 'center',
-                          background: '#FFFFFF',
-                          cursor: 'pointer',
-                          transition: 'border-color 0.2s ease',
-                          position: 'relative'
-                        }}>
-                          <input
-                            type="file"
-                            accept="image/jpeg,image/png,image/webp,application/pdf,video/mp4"
-                            onChange={handleMediaFileUpload}
-                            disabled={uploadingMedia}
-                            style={{
-                              position: 'absolute',
-                              inset: 0,
-                              opacity: 0,
-                              cursor: 'pointer',
-                              width: '100%',
-                              height: '100%'
-                            }}
-                          />
-                          <UploadCloud size={30} color={uploadingMedia ? 'var(--brand-wa)' : '#94A3B8'} style={{ margin: '0 auto 8px auto' }} />
-                          <div style={{ fontSize: '0.875rem', fontWeight: 600, color: '#334155' }}>
-                            {uploadingMedia ? 'Uploading to Server & Meta Cloud...' : 'Click to choose image file or drag here'}
-                          </div>
-                          <div style={{ fontSize: '0.75rem', color: '#94A3B8', marginTop: '4px' }}>
-                            JPG, PNG, WEBP, PDF up to 25MB. Uploads directly to Meta Cloud API.
-                          </div>
-                        </div>
+                    <input
+                      type="url"
+                      className="saas-input"
+                      placeholder="https://example.com/banner.jpg or click Upload File"
+                      value={headerMediaUrl}
+                      onChange={e => {
+                        setHeaderMediaUrl(e.target.value);
+                        setHeaderMediaId('');
+                      }}
+                      style={{ fontSize: '0.85rem' }}
+                    />
 
-                        {mediaUploadSuccess && (
-                          <div style={{ marginTop: '10px', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', color: '#16A34A', fontWeight: 600 }}>
-                            <CheckCircle2 size={15} /> Media uploaded & synchronized with Meta!
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    {/* Tab 2: Template Default Image */}
-                    {mediaSourceTab === 'default' && (
-                      <div style={{ background: '#FFFFFF', padding: '14px', borderRadius: '10px', border: '1px solid var(--border-color)' }}>
-                        <div style={{ fontSize: '0.825rem', color: '#475569', marginBottom: '8px' }}>
-                          Using the verified sample image registered with Meta for this template:
-                        </div>
-                        {templateExampleUrl && (
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                            <img
-                              src={templateExampleUrl}
-                              alt="Template default"
-                              style={{ width: '80px', height: '60px', objectFit: 'cover', borderRadius: '6px', border: '1px solid #E2E8F0' }}
-                            />
-                            <div style={{ fontSize: '0.75rem', color: '#64748B', wordBreak: 'break-all' }}>
-                              {templateExampleUrl.substring(0, 70)}...
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    {/* Tab 3: Web URL */}
-                    {mediaSourceTab === 'url' && (
-                      <div>
-                        <input
-                          type="url"
-                          className="saas-input"
-                          placeholder="https://yourdomain.com/images/banner.jpg"
-                          value={headerMediaUrl}
-                          onChange={e => {
-                            setHeaderMediaUrl(e.target.value);
-                            setHeaderMediaId('');
-                          }}
-                          style={{ fontSize: '0.85rem' }}
-                        />
-                        {headerMediaUrl && (headerMediaUrl.includes('photos.app.goo.gl') || headerMediaUrl.includes('photos.google.com')) && (
-                          <div style={{ marginTop: '8px', padding: '8px 12px', background: '#FEF3C7', border: '1px solid #FDE68A', borderRadius: '6px', color: '#B45309', fontSize: '0.75rem' }}>
-                            ⚠️ <strong>Notice:</strong> Google Photos album links are web pages, not direct image files. We recommend clicking <strong>Upload File</strong> above to upload your image file directly.
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    {/* Live Thumbnail Preview if a URL is active */}
                     {headerMediaUrl && (
-                      <div style={{ marginTop: '14px', display: 'flex', alignItems: 'center', gap: '12px', background: '#FFFFFF', padding: '10px 14px', borderRadius: '8px', border: '1px solid #E2E8F0' }}>
+                      <div style={{ marginTop: '8px', display: 'flex', alignItems: 'center', gap: '10px', background: '#F8FAFC', padding: '6px 10px', borderRadius: '6px', border: '1px solid #E2E8F0' }}>
                         <img
                           src={headerMediaUrl}
-                          alt="Header media preview"
-                          onError={(e) => { e.target.style.display = 'none'; }}
-                          style={{ width: '64px', height: '48px', objectFit: 'cover', borderRadius: '6px', border: '1px solid #E2E8F0' }}
+                          alt="Header preview"
+                          onError={e => { e.target.style.display = 'none'; }}
+                          style={{ width: '40px', height: '30px', objectFit: 'cover', borderRadius: '4px' }}
                         />
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontSize: '0.78rem', fontWeight: 600, color: '#0F172A', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                            Active Header Media
-                          </div>
-                          <div style={{ fontSize: '0.7rem', color: '#64748B', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                            {headerMediaId ? `Meta Media ID: ${headerMediaId}` : headerMediaUrl}
-                          </div>
-                        </div>
+                        <span style={{ fontSize: '0.75rem', color: '#64748B', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {headerMediaId ? `Meta Media ID: ${headerMediaId}` : headerMediaUrl}
+                        </span>
                         <button
                           type="button"
                           onClick={() => {
                             setHeaderMediaUrl('');
                             setHeaderMediaId('');
-                            setMediaUploadSuccess(false);
                           }}
-                          className="btn btn-secondary"
-                          style={{ padding: '4px 8px', fontSize: '0.72rem' }}
+                          style={{ border: 'none', background: 'transparent', color: '#94A3B8', cursor: 'pointer', fontSize: '0.8rem' }}
                         >
-                          Clear
+                          ✕
                         </button>
                       </div>
                     )}

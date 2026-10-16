@@ -329,6 +329,16 @@ class WebhookService {
       `).run(newStatus, recipient.id);
     }
 
+    if (newStatus === "FAILED" && recipient.status !== "FAILED" && recipient.campaign_id) {
+      try {
+        db.prepare(`
+          UPDATE campaigns 
+          SET sent_count = MAX(0, sent_count - 1), failed_count = failed_count + 1 
+          WHERE id = ?
+        `).run(recipient.campaign_id);
+      } catch (err) {}
+    }
+
     return true;
   }
 

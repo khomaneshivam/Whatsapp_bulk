@@ -425,9 +425,13 @@ class BroadcastEngine extends EventEmitter {
         if (!recipient) {
           // All recipients processed!
           db.prepare("UPDATE campaigns SET status = 'COMPLETED', completed_at = CURRENT_TIMESTAMP WHERE id = ?").run(campaignId);
+          const finalCamp = db.prepare("SELECT sent_count, failed_count, valid_contacts FROM campaigns WHERE id = ?").get(campaignId);
           this.emit("campaign:status", {
             campaignId,
             status: "COMPLETED",
+            sent: finalCamp?.sent_count || 0,
+            failed: finalCamp?.failed_count || 0,
+            total: finalCamp?.valid_contacts || campaign.valid_contacts,
             message: `Campaign '${campaign.name}' finished broadcasting.`
           });
           break;
@@ -477,26 +481,37 @@ class BroadcastEngine extends EventEmitter {
           updateRecipientSuccess.run(sendResult.messageId || null, renderedContent, recipient.id);
           incrementSent.run(campaignId);
 
+          const curStats = db.prepare("SELECT sent_count, failed_count, valid_contacts FROM campaigns WHERE id = ?").get(campaignId);
           this.emit("broadcast:progress", {
             campaignId,
             recipientId: recipient.id,
             phone: recipient.clean_phone,
             name: recipient.contact_name,
             status: "SENT",
-            messageId: sendResult.messageId
+            messageId: sendResult.messageId,
+            sent: curStats?.sent_count || 1,
+            failed: curStats?.failed_count || 0,
+            total: curStats?.valid_contacts || campaign.valid_contacts,
+            lastRecipient: recipient.contact_name || recipient.clean_phone,
+            metaMessageId: sendResult.messageId
           });
         } catch (err) {
           console.warn(`[Broadcast] Message failed to ${recipient.clean_phone}:`, err.message);
           updateRecipientFail.run(err.message || "Failed to send", "", recipient.id);
           incrementFailed.run(campaignId);
 
+          const curStats = db.prepare("SELECT sent_count, failed_count, valid_contacts FROM campaigns WHERE id = ?").get(campaignId);
           this.emit("broadcast:progress", {
             campaignId,
             recipientId: recipient.id,
             phone: recipient.clean_phone,
             name: recipient.contact_name,
             status: "FAILED",
-            error: err.message
+            error: err.message,
+            sent: curStats?.sent_count || 0,
+            failed: curStats?.failed_count || 1,
+            total: curStats?.valid_contacts || campaign.valid_contacts,
+            lastRecipient: recipient.contact_name || recipient.clean_phone
           });
         }
 
