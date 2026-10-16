@@ -1,6 +1,8 @@
 const EventEmitter = require("events");
+const fs = require("fs");
+const path = require("path");
 const { db } = require("../config/database");
-const { sendTemplateMessage, sendTextMessage } = require("./metaWhatsAppService");
+const { sendTemplateMessage, sendTextMessage, uploadMedia } = require("./metaWhatsAppService");
 
 class BroadcastEngine extends EventEmitter {
   constructor() {
@@ -309,6 +311,72 @@ class BroadcastEngine extends EventEmitter {
       mappingConfig = campaign.mapping_config ? JSON.parse(campaign.mapping_config) : {};
     } catch {
       mappingConfig = {};
+    }
+
+    // Pre-resolve and upload header media to Meta CDN once for the campaign
+    // This avoids Meta webhook failures ("Media upload error") when using external URLs or sample handles
+    if (campaign.message_type === "TEMPLATE" && !mappingConfig.headerMediaId) {
+      try {
+        const tplName = (campaign.template_name || "").trim();
+        let tplRow = db.prepare("SELECT * FROM templates WHERE name = ? OR meta_id = ? OR id = ? LIMIT 1").get(tplName, tplName, tplName);
+        let tplComponents = [];
+        if (tplRow && tplRow.components) {
+          try { tplComponents = JSON.parse(tplRow.components); } catch (e) {}
+        }
+        const headerComp = tplComponents.find(c => String(c.type || "").toUpperCase() === "HEADER");
+        if (headerComp) {
+          let mediaUrl = (mappingConfig.headerMediaUrl || "").trim() || headerComp.example?.header_handle?.[0] || "";
+          if (/^\d{10,}$/.test(mediaUrl)) {
+            mappingConfig.headerMediaId = mediaUrl;
+          } else if (mediaUrl) {
+            let fileBuffer = null;
+            let mimeType = headerComp.format?.toLowerCase() === "document" ? "application/pdf" : "image/jpeg";
+            let fileName = "header_media.jpg";
+
+            // 1. Check if it points to a local file in public/uploads/
+            if (mediaUrl.includes("/uploads/")) {
+              const filename = mediaUrl.split("/uploads/")[1]?.split("?")[0];
+              if (filename) {
+                const localPath = path.join(__dirname, "..", "..", "public", "uploads", filename);
+                if (fs.existsSync(localPath)) {
+                  fileBuffer = fs.readFileSync(localPath);
+                  fileName = filename;
+                }
+              }
+            }
+
+            // 2. Otherwise fetch from remote URL
+            if (!fileBuffer) {
+              if (mediaUrl.includes("drive.google.com/file/d/")) {
+                const match = mediaUrl.match(/drive\.google\.com\/file\/d\/([a-zA-Z0-9_-]+)/);
+                if (match && match[1]) {
+                  mediaUrl = `https://drive.google.com/uc?export=download&id=${match[1]}`;
+                }
+              }
+              const fetchRes = await fetch(mediaUrl, { headers: { "User-Agent": "Mozilla/5.0" } });
+              if (fetchRes.ok) {
+                fileBuffer = Buffer.from(await fetchRes.arrayBuffer());
+                const ct = fetchRes.headers.get("content-type");
+                if (ct && !ct.includes("text/html")) mimeType = ct;
+              }
+            }
+
+            if (fileBuffer) {
+              const uploadRes = await uploadMedia({ fileBuffer, fileName, mimeType });
+              if (uploadRes && uploadRes.mediaId) {
+                mappingConfig.headerMediaId = uploadRes.mediaId;
+                db.prepare("UPDATE campaigns SET mapping_config = ? WHERE id = ?").run(
+                  JSON.stringify(mappingConfig),
+                  campaignId
+                );
+                console.log(`[Broadcast] Pre-uploaded header media to Meta CDN. Media ID: ${uploadRes.mediaId} for campaign ${campaignId}`);
+              }
+            }
+          }
+        }
+      } catch (mediaErr) {
+        console.warn(`[Broadcast] Note: Header media pre-upload failed:`, mediaErr.message);
+      }
     }
 
     const delayMs = campaign.delay_ms || 250;
