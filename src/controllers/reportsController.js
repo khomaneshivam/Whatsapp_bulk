@@ -48,9 +48,14 @@ async function getCampaignReports(req, res) {
 
     const dataQuery = `
       SELECT 
-        r.id, r.campaign_id, c.name as campaign_name, r.contact_name,
-        r.phone_number, r.clean_phone, r.status, r.meta_message_id,
-        r.error_message, r.sent_at, c.template_name
+        r.id, r.campaign_id, c.name as campaign_name,
+        r.contact_name, r.contact_name as recipient_name,
+        r.phone_number, r.clean_phone,
+        r.status, r.status as delivery_status,
+        r.meta_message_id,
+        r.error_message, r.error_message as error_reason,
+        r.sent_at, r.sent_at as dispatched_at,
+        c.template_name
       FROM campaign_recipients r
       LEFT JOIN campaigns c ON r.campaign_id = c.id
       ${whereClause}

@@ -25,44 +25,29 @@ export default function DashboardPage({ setActiveTab }) {
   async function loadDashboardData() {
     setLoading(true);
     try {
-      const headers = { 'Authorization': `Bearer ${token}` };
+      const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
       
       const [overRes, campRes] = await Promise.all([
         fetch('/api/reports/overview', { headers }),
-        fetch('/api/reports/campaigns', { headers })
+        fetch('/api/campaigns', { headers })
       ]);
 
       const overData = await overRes.json();
       const campData = await campRes.json();
 
       if (overData.success) setOverview(overData.data);
-      if (campData.success && campData.data) {
-        // Group unique campaigns from recipient logs
-        const uniqueCampMap = {};
-        campData.data.forEach(item => {
-          const cId = item.campaign_id;
-          if (!uniqueCampMap[cId]) {
-            uniqueCampMap[cId] = {
-              id: cId,
-              name: item.campaign_name,
-              template: item.template_name,
-              created_at: item.created_at,
-              status: item.status,
-              recipients: 0,
-              delivered: 0,
-              read: 0,
-              failed: 0
-            };
-          }
-          uniqueCampMap[cId].recipients++;
-          if (item.status === 'DELIVERED') uniqueCampMap[cId].delivered++;
-          if (item.status === 'READ') {
-            uniqueCampMap[cId].delivered++;
-            uniqueCampMap[cId].read++;
-          }
-          if (item.status === 'FAILED') uniqueCampMap[cId].failed++;
-        });
-        setRecentCampaigns(Object.values(uniqueCampMap).slice(0, 6));
+      if (campData.success && Array.isArray(campData.data)) {
+        const formatted = campData.data.map(item => ({
+          id: item.id,
+          name: item.name,
+          template: item.template_name || item.template || 'Template',
+          created_at: item.created_at,
+          status: item.status || 'COMPLETED',
+          recipients: item.valid_contacts || item.total_contacts || 0,
+          delivered: item.sent_count || 0,
+          failed: item.failed_count || 0
+        }));
+        setRecentCampaigns(formatted.slice(0, 6));
       }
     } catch (err) {
       console.error('Failed to load dashboard data:', err);
