@@ -50,28 +50,42 @@ class BroadcastEngine extends EventEmitter {
     // 2. Process HEADER component if required by template or provided by user
     const headerComp = tplComponents.find(c => String(c.type || "").toUpperCase() === "HEADER");
     let headerMediaUrl = (mappingConfig?.headerMediaUrl || "").trim();
+    let headerMediaId = (mappingConfig?.headerMediaId || "").trim();
     let headerFormat = "IMAGE";
 
     if (headerComp) {
       headerFormat = (headerComp.format || "IMAGE").toUpperCase();
-      if (!headerMediaUrl) {
+      if (!headerMediaUrl && !headerMediaId) {
         headerMediaUrl = headerComp.example?.header_handle?.[0] || "";
       }
     }
 
-    if (headerMediaUrl && (headerComp || mappingConfig?.headerMediaUrl)) {
+    // If headerMediaUrl is actually a numeric Meta Media ID, treat as ID
+    if (!headerMediaId && /^\d{10,}$/.test(headerMediaUrl)) {
+      headerMediaId = headerMediaUrl;
+      headerMediaUrl = "";
+    }
+
+    // Auto-detect and resolve Google Drive share links
+    if (headerMediaUrl && headerMediaUrl.includes("drive.google.com/file/d/")) {
+      const match = headerMediaUrl.match(/drive\.google\.com\/file\/d\/([a-zA-Z0-9_-]+)/);
+      if (match && match[1]) {
+        headerMediaUrl = `https://drive.google.com/uc?export=download&id=${match[1]}`;
+      }
+    }
+
+    if ((headerMediaId || headerMediaUrl) && (headerComp || mappingConfig?.headerMediaUrl || mappingConfig?.headerMediaId)) {
       const mediaType = headerFormat.toLowerCase(); // "image", "document", "video"
       if (["image", "document", "video"].includes(mediaType)) {
+        const paramItem = { type: mediaType };
+        if (headerMediaId) {
+          paramItem[mediaType] = { id: headerMediaId };
+        } else {
+          paramItem[mediaType] = { link: headerMediaUrl };
+        }
         components.push({
           type: "header",
-          parameters: [
-            {
-              type: mediaType,
-              [mediaType]: {
-                link: headerMediaUrl
-              }
-            }
-          ]
+          parameters: [paramItem]
         });
       }
     }

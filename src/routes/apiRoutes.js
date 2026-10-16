@@ -77,6 +77,80 @@ const upload = multer({
 // Upload & Parsing
 router.post("/upload", optionalAuth, upload.single("file"), uploadController.handleFileUpload);
 
+// Dedicated Header Media Uploader (Images, Documents, Videos)
+const mediaStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const dir = path.join(__dirname, "..", "..", "public", "uploads");
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    cb(null, dir);
+  },
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname) || ".jpg";
+    const base = path.basename(file.originalname, ext).replace(/[^a-zA-Z0-9_-]/g, "_");
+    cb(null, `media_${Date.now()}_${base}${ext}`);
+  }
+});
+
+const mediaUpload = multer({
+  storage: mediaStorage,
+  limits: { fileSize: 30 * 1024 * 1024 }, // 30MB
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith("image/") || file.mimetype === "application/pdf" || file.mimetype.startsWith("video/")) {
+      cb(null, true);
+    } else {
+      cb(new Error("Only image files (JPG, PNG, WEBP), PDF documents, or MP4 videos are allowed."));
+    }
+  }
+});
+
+const { uploadMedia } = require("../services/metaWhatsAppService");
+
+router.post("/upload/media", optionalAuth, mediaUpload.single("file"), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ success: false, message: "No media file provided." });
+    }
+
+    const relativeUrl = `/uploads/${req.file.filename}`;
+    const host = req.get("host");
+    const protocol = req.protocol === "https" || req.headers["x-forwarded-proto"] === "https" ? "https" : "http";
+    const fullUrl = `${protocol}://${host}${relativeUrl}`;
+
+    let mediaId = null;
+    let metaUploadError = null;
+
+    try {
+      const fileBuffer = fs.readFileSync(req.file.path);
+      const metaRes = await uploadMedia({
+        fileBuffer,
+        fileName: req.file.originalname,
+        mimeType: req.file.mimetype
+      });
+      if (metaRes && metaRes.mediaId) {
+        mediaId = metaRes.mediaId;
+      }
+    } catch (err) {
+      metaUploadError = err.message;
+      console.warn("[UploadMedia] Meta direct upload note:", err.message);
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Media uploaded successfully.",
+      url: fullUrl,
+      relativeUrl,
+      mediaId,
+      fileName: req.file.originalname,
+      mimeType: req.file.mimetype,
+      size: req.file.size,
+      metaUploadError
+    });
+  } catch (error) {
+    console.error("Media upload error:", error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+});
+
 // Campaigns
 router.post("/campaigns", optionalAuth, broadcastController.createCampaign);
 router.get("/campaigns", optionalAuth, campaignController.listCampaigns);
@@ -91,7 +165,7 @@ const { cleanPhone } = require("../services/metaWhatsAppService");
 
 router.post("/broadcast/send", optionalAuth, upload.single("file"), async (req, res) => {
   try {
-    const { campaignName, templateName, templateLang, phoneColumn, nameColumn, variableMappings, headerMediaUrl, scheduledTime, phoneId, delayMs, throttleDelay } = req.body || {};
+    const { campaignName, templateName, templateLang, phoneColumn, nameColumn, variableMappings, headerMediaUrl, headerMediaId, scheduledTime, phoneId, delayMs, throttleDelay } = req.body || {};
     let contacts = [];
     let detectedPhone = phoneColumn;
     let fileName = "contacts.csv";
@@ -131,7 +205,7 @@ router.post("/broadcast/send", optionalAuth, upload.single("file"), async (req, 
       phoneColumn: detectedPhone,
       nameColumn: nameColumn || null,
       phoneId: phoneId || null,
-      mappingConfig: { bodyParams, headerMediaUrl },
+      mappingConfig: { bodyParams, headerMediaUrl, headerMediaId },
       scheduleMode: scheduledTime ? "SCHEDULE" : "NOW",
       scheduledAt: scheduledTime || null,
       delayMs: parsedDelay,

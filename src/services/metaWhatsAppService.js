@@ -463,11 +463,45 @@ async function sendTextMessage({ to, body, previewUrl = false, customCredentials
   };
 }
 
+/**
+ * Uploads a media file directly to Meta Cloud API to obtain a permanent Meta Media ID
+ */
+async function uploadMedia({ fileBuffer, fileName, mimeType, customCredentials = null }) {
+  const creds = customCredentials || getActiveCredentials();
+  const url = `${META_BASE_URL}/${creds.phoneNumberId}/media`;
+
+  const formData = new FormData();
+  formData.append("messaging_product", "whatsapp");
+  formData.append("type", mimeType || "image/jpeg");
+  formData.append("file", new Blob([fileBuffer], { type: mimeType || "image/jpeg" }), fileName || "media.jpg");
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${creds.token}`
+    },
+    body: formData
+  });
+
+  const data = await res.json();
+  if (!res.ok) {
+    throw parseMetaError(data, res.status);
+  }
+
+  return {
+    success: true,
+    mediaId: data.id,
+    data
+  };
+}
+
 module.exports = {
   getActiveCredentials,
   testConnection,
   cleanPhone,
   getTemplateDetails,
   sendTemplateMessage,
-  sendTextMessage
+  sendTextMessage,
+  uploadMedia
 };
+
