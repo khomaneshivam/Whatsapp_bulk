@@ -4,12 +4,15 @@ import {
   MessageSquare, 
   Send, 
   RefreshCw, 
-  CheckCheck,
-  Search,
-  ShieldCheck,
-  User,
-  Clock,
-  Sparkles
+  CheckCheck, 
+  Search, 
+  ShieldCheck, 
+  User, 
+  Clock, 
+  Sparkles,
+  ArrowLeft,
+  X,
+  Phone
 } from 'lucide-react';
 
 export default function InboxPage() {
@@ -20,22 +23,33 @@ export default function InboxPage() {
   const [sendingReply, setSendingReply] = useState(false);
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
+
   const messagesEndRef = useRef(null);
+  const inputRef = useRef(null);
+  const initialSelectionDone = useRef(false);
 
   useEffect(() => {
-    loadInbox();
-    // Live auto-refresh polling every 8 seconds
+    loadInbox(false);
+    // Background auto-refresh polling every 8 seconds
     const interval = setInterval(() => {
       loadInbox(true);
     }, 8000);
     return () => clearInterval(interval);
   }, [token]);
 
+  // Auto-scroll to bottom of chat when active conversation changes or new messages arrive
   useEffect(() => {
     if (selectedConvo?.messages?.length) {
       messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
   }, [selectedConvo?.phone, selectedConvo?.messages?.length]);
+
+  // Focus message input when switching conversations on desktop
+  useEffect(() => {
+    if (selectedConvo && typeof window !== 'undefined' && window.innerWidth >= 860) {
+      inputRef.current?.focus();
+    }
+  }, [selectedConvo?.phone]);
 
   async function loadInbox(silent = false) {
     if (!silent) setLoading(true);
@@ -129,13 +143,19 @@ export default function InboxPage() {
 
         setConversations(sortedConvos);
 
-        // Keep current selection updated or select first on initial load
+        // Keep current selection updated with new messages, or only auto-select on initial load on desktop
         setSelectedConvo(prev => {
-          if (!prev && sortedConvos.length > 0) return sortedConvos[0];
           if (prev) {
             const updated = sortedConvos.find(c => c.phone === prev.phone);
             return updated || prev;
           }
+
+          // Initial load auto-select ONLY on desktop (window width >= 900px)
+          if (!initialSelectionDone.current && typeof window !== 'undefined' && window.innerWidth >= 900 && sortedConvos.length > 0) {
+            initialSelectionDone.current = true;
+            return sortedConvos[0];
+          }
+
           return null;
         });
       }
@@ -146,9 +166,37 @@ export default function InboxPage() {
     }
   }
 
+  function handleSelectConversation(convo) {
+    setSelectedConvo(convo);
+    initialSelectionDone.current = true;
+
+    // Clear unread badge locally
+    if (convo.unreadCount > 0) {
+      setConversations(prev => 
+        prev.map(c => c.phone === convo.phone ? { ...c, unreadCount: 0 } : c)
+      );
+      // Mark as read in backend
+      const unreadIds = convo.messages
+        .filter(m => !m.is_outbound && m.is_read === 0 && m.id && typeof m.id === 'number')
+        .map(m => m.id);
+      
+      unreadIds.forEach(id => {
+        fetch(`/api/replies/${id}/mark-read`, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${token}` }
+        }).catch(() => {});
+      });
+    }
+  }
+
+  function handleBackToList() {
+    setSelectedConvo(null);
+    initialSelectionDone.current = true; // prevents background polling from forcing chat re-open
+  }
+
   async function handleSendReply(e) {
-    e.preventDefault();
-    if (!replyText.trim() || !selectedConvo) return;
+    if (e && e.preventDefault) e.preventDefault();
+    if (!replyText.trim() || !selectedConvo || sendingReply) return;
 
     const textToSend = replyText.trim();
     setSendingReply(true);
@@ -206,48 +254,42 @@ export default function InboxPage() {
   );
 
   return (
-    <div style={{ maxWidth: '1440px', margin: '0 auto', padding: '28px 24px' }}>
+    <div style={{ maxWidth: '1440px', margin: '0 auto', padding: '24px 20px' }}>
       {/* Page Header */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '24px', flexWrap: 'wrap', gap: '14px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px', flexWrap: 'wrap', gap: '12px' }}>
         <div>
-          <h1 style={{ fontSize: '1.65rem', fontWeight: 800, color: '#0F172A', letterSpacing: '-0.02em', display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <h1 style={{ fontSize: '1.6rem', fontWeight: 800, color: '#0F172A', letterSpacing: '-0.02em', display: 'flex', alignItems: 'center', gap: '10px' }}>
             <span>2-Way Customer Inbox</span>
-            <span style={{ fontSize: '0.8rem', fontWeight: 600, background: '#DCFCE7', color: '#15803D', padding: '2px 10px', borderRadius: '12px', border: '1px solid #BBF7D0' }}>
+            <span style={{ fontSize: '0.75rem', fontWeight: 600, background: '#DCFCE7', color: '#15803D', padding: '3px 10px', borderRadius: '12px', border: '1px solid #BBF7D0' }}>
               Live Sync
             </span>
           </h1>
-          <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', marginTop: '4px' }}>
+          <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginTop: '3px' }}>
             Live WhatsApp customer conversations captured via Meta webhook. Read incoming guest messages and reply instantly.
           </p>
         </div>
 
-        <button onClick={() => loadInbox(false)} className="btn btn-secondary" style={{ gap: '6px' }} disabled={loading}>
-          <RefreshCw size={15} className={loading ? 'pulse-glow' : ''} />
-          <span>{loading ? 'Syncing...' : 'Refresh Inbox'}</span>
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <button 
+            type="button"
+            onClick={() => loadInbox(false)} 
+            className="btn btn-secondary" 
+            style={{ gap: '6px', fontSize: '0.825rem' }} 
+            disabled={loading}
+          >
+            <RefreshCw size={14} className={loading ? 'pulse-glow' : ''} />
+            <span>{loading ? 'Syncing...' : 'Refresh'}</span>
+          </button>
+        </div>
       </div>
 
       {/* Main Inbox Two-Pane Container */}
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: 'minmax(320px, 380px) minmax(0, 1fr)',
-        gap: '20px',
-        height: '720px',
-        background: '#FFFFFF',
-        border: '1px solid var(--border-color)',
-        borderRadius: '14px',
-        overflow: 'hidden',
-        boxShadow: 'var(--shadow-sm)'
-      }}>
+      <div className={`inbox-layout-container ${selectedConvo ? 'has-convo-selected' : ''}`}>
+        
         {/* Left Pane: Conversation List */}
-        <div style={{
-          borderRight: '1px solid var(--border-color)',
-          display: 'flex',
-          flexDirection: 'column',
-          background: '#F8FAFC'
-        }}>
+        <div className="inbox-list-pane">
           {/* Search Bar */}
-          <div style={{ padding: '16px', borderBottom: '1px solid var(--border-color)', background: '#FFFFFF' }}>
+          <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--border-color)', background: '#FFFFFF' }}>
             <div style={{ position: 'relative' }}>
               <input
                 type="text"
@@ -255,9 +297,30 @@ export default function InboxPage() {
                 className="saas-input"
                 value={search}
                 onChange={e => setSearch(e.target.value)}
-                style={{ paddingLeft: '34px', fontSize: '0.825rem' }}
+                style={{ paddingLeft: '34px', paddingRight: search ? '30px' : '14px', fontSize: '0.825rem' }}
               />
-              <Search size={16} color="#94A3B8" style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)' }} />
+              <Search size={15} color="#94A3B8" style={{ position: 'absolute', left: '11px', top: '50%', transform: 'translateY(-50%)' }} />
+              {search && (
+                <button
+                  type="button"
+                  onClick={() => setSearch('')}
+                  style={{
+                    position: 'absolute',
+                    right: '10px',
+                    top: '50%',
+                    transform: 'translateY(-50%)',
+                    background: 'none',
+                    border: 'none',
+                    color: '#94A3B8',
+                    cursor: 'pointer',
+                    padding: '2px',
+                    display: 'flex'
+                  }}
+                  title="Clear search"
+                >
+                  <X size={14} />
+                </button>
+              )}
             </div>
           </div>
 
@@ -283,9 +346,9 @@ export default function InboxPage() {
                 return (
                   <div
                     key={c.phone}
-                    onClick={() => setSelectedConvo(c)}
+                    onClick={() => handleSelectConversation(c)}
                     style={{
-                      padding: '14px 18px',
+                      padding: '13px 16px',
                       borderBottom: '1px solid #E2E8F0',
                       background: isSelected ? '#FFFFFF' : 'transparent',
                       cursor: 'pointer',
@@ -325,7 +388,7 @@ export default function InboxPage() {
                         </span>
                       </div>
 
-                      <div style={{ fontSize: '0.75rem', fontFamily: 'var(--font-mono)', color: '#64748B', marginBottom: '2px' }}>
+                      <div style={{ fontSize: '0.74rem', fontFamily: 'var(--font-mono)', color: '#64748B', marginBottom: '2px' }}>
                         +{c.phone}
                       </div>
 
@@ -361,22 +424,34 @@ export default function InboxPage() {
         </div>
 
         {/* Right Pane: Active Chat Conversation */}
-        <div style={{ display: 'flex', flexDirection: 'column', background: '#FFFFFF' }}>
+        <div className="inbox-chat-pane">
           {selectedConvo ? (
             <>
-              {/* Header */}
+              {/* Header with Back Button */}
               <div style={{
-                padding: '14px 20px',
+                padding: '12px 18px',
                 borderBottom: '1px solid var(--border-color)',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'space-between',
-                background: '#FFFFFF'
+                background: '#FFFFFF',
+                gap: '12px'
               }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
+                  {/* Dedicated Back Button */}
+                  <button
+                    type="button"
+                    onClick={handleBackToList}
+                    className="inbox-back-btn"
+                    title="Back to conversation list"
+                  >
+                    <ArrowLeft size={16} />
+                    <span>Back</span>
+                  </button>
+
                   <div style={{
-                    width: '42px',
-                    height: '42px',
+                    width: '38px',
+                    height: '38px',
                     borderRadius: '50%',
                     background: '#DCFCE7',
                     border: '1px solid #BBF7D0',
@@ -385,31 +460,50 @@ export default function InboxPage() {
                     justifyContent: 'center',
                     color: '#15803D',
                     fontWeight: 800,
-                    fontSize: '0.9rem'
+                    fontSize: '0.875rem',
+                    flexShrink: 0
                   }}>
                     {(selectedConvo.name || selectedConvo.phone || 'G').substring(0, 2).toUpperCase()}
                   </div>
-                  <div>
-                    <h3 style={{ fontSize: '1rem', fontWeight: 800, color: '#0F172A', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <span>{selectedConvo.name}</span>
+
+                  <div style={{ minWidth: 0 }}>
+                    <h3 style={{ fontSize: '0.95rem', fontWeight: 800, color: '#0F172A', margin: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {selectedConvo.name}
                     </h3>
-                    <div style={{ fontSize: '0.78rem', color: '#64748B', fontFamily: 'var(--font-mono)' }}>
+                    <div style={{ fontSize: '0.74rem', color: '#64748B', fontFamily: 'var(--font-mono)' }}>
                       +{selectedConvo.phone}
                     </div>
                   </div>
                 </div>
 
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <span className="badge badge-success" style={{ fontSize: '0.725rem', gap: '5px' }}>
-                    <ShieldCheck size={13} /> WhatsApp Verified User
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+                  <span className="badge badge-success" style={{ fontSize: '0.7rem', gap: '4px' }}>
+                    <ShieldCheck size={12} /> WhatsApp Verified
                   </span>
+                  <button
+                    type="button"
+                    onClick={handleBackToList}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      color: '#94A3B8',
+                      cursor: 'pointer',
+                      padding: '4px',
+                      borderRadius: '6px',
+                      display: 'flex',
+                      alignItems: 'center'
+                    }}
+                    title="Close conversation"
+                  >
+                    <X size={18} />
+                  </button>
                 </div>
               </div>
 
               {/* Chat Messages Canvas */}
               <div style={{
                 flex: 1,
-                padding: '24px',
+                padding: '20px',
                 overflowY: 'auto',
                 display: 'flex',
                 flexDirection: 'column',
@@ -424,19 +518,19 @@ export default function InboxPage() {
                     <div
                       key={m.id || idx}
                       style={{
-                        maxWidth: '75%',
+                        maxWidth: '80%',
                         alignSelf: isOutbound ? 'flex-end' : 'flex-start',
                         background: isOutbound ? '#DCFCE7' : '#FFFFFF',
                         color: '#0F172A',
                         border: `1px solid ${isOutbound ? '#BBF7D0' : '#E2E8F0'}`,
-                        borderRadius: isOutbound ? '12px 12px 0 12px' : '12px 12px 12px 0',
+                        borderRadius: isOutbound ? '12px 12px 2px 12px' : '12px 12px 12px 2px',
                         padding: '10px 14px',
                         boxShadow: 'var(--shadow-xs)',
                         wordWrap: 'break-word'
                       }}
                     >
                       {m.is_auto && (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.7rem', fontWeight: 700, color: '#16A34A', marginBottom: '4px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.68rem', fontWeight: 700, color: '#16A34A', marginBottom: '4px' }}>
                           <Sparkles size={11} /> Auto-Reply Bot
                         </div>
                       )}
@@ -467,29 +561,37 @@ export default function InboxPage() {
               <form 
                 onSubmit={handleSendReply}
                 style={{
-                  padding: '14px 20px',
+                  padding: '12px 16px',
                   borderTop: '1px solid var(--border-color)',
                   display: 'flex',
                   gap: '10px',
-                  background: '#FFFFFF'
+                  background: '#FFFFFF',
+                  alignItems: 'center'
                 }}
               >
                 <input
+                  ref={inputRef}
                   type="text"
                   placeholder={`Reply directly to ${selectedConvo.name} on WhatsApp...`}
                   className="saas-input"
                   value={replyText}
                   onChange={e => setReplyText(e.target.value)}
-                  style={{ flex: 1 }}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      handleSendReply(e);
+                    }
+                  }}
+                  style={{ flex: 1, fontSize: '0.875rem' }}
                 />
                 <button
                   type="submit"
                   disabled={sendingReply || !replyText.trim()}
                   className="btn btn-action-green"
-                  style={{ gap: '6px' }}
+                  style={{ gap: '6px', padding: '10px 18px', flexShrink: 0 }}
                 >
                   <Send size={15} />
-                  <span>{sendingReply ? 'Sending...' : 'Send Reply'}</span>
+                  <span>{sendingReply ? 'Sending...' : 'Send'}</span>
                 </button>
               </form>
             </>
@@ -500,12 +602,13 @@ export default function InboxPage() {
               flexDirection: 'column',
               alignItems: 'center',
               justifyContent: 'center',
-              color: '#94A3B8'
+              color: '#94A3B8',
+              padding: '30px'
             }}>
               <MessageSquare size={44} color="#CBD5E1" style={{ marginBottom: '14px' }} />
               <div style={{ fontWeight: 700, color: '#334155', fontSize: '1rem' }}>Select a customer conversation</div>
-              <div style={{ fontSize: '0.825rem', marginTop: '4px', maxWidth: '320px', textAlign: 'center' }}>
-                Pick a chat from the left panel to review message history and dispatch instant WhatsApp replies.
+              <div style={{ fontSize: '0.825rem', marginTop: '6px', maxWidth: '340px', textAlign: 'center', color: '#64748B', lineHeight: 1.5 }}>
+                Choose a guest from the left panel to review message history and dispatch instant WhatsApp replies.
               </div>
             </div>
           )}

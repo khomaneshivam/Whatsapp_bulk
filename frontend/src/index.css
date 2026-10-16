@@ -342,3 +342,87 @@ body {
 .pulse-glow {
   animation: pulseGlow 2s infinite;
 }
+
+/* 2-Way Inbox Responsive Layout & Controls */
+.inbox-layout-container {
+  display: grid;
+  grid-template-columns: minmax(320px, 380px) minmax(0, 1fr);
+  gap: 20px;
+  height: 740px;
+  background: #FFFFFF;
+  border: 1px solid var(--border-color);
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
+  transition: all 0.2s ease;
+}
+
+.inbox-list-pane {
+  border-right: 1px solid var(--border-color);
+  display: flex;
+  flex-direction: column;
+  background: #F8FAFC;
+  height: 100%;
+  overflow: hidden;
+}
+
+.inbox-chat-pane {
+  display: flex;
+  flex-direction: column;
+  background: #FFFFFF;
+  height: 100%;
+  overflow: hidden;
+}
+
+.inbox-back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  font-size: 0.825rem;
+  font-weight: 600;
+  border-radius: 8px;
+  background: #F1F5F9;
+  border: 1px solid var(--border-color);
+  color: #334155;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.inbox-back-btn:hover {
+  background: #E2E8F0;
+  color: #0F172A;
+  border-color: var(--border-strong);
+}
+
+@media (max-width: 860px) {
+  .inbox-layout-container {
+    grid-template-columns: 1fr;
+    height: calc(100vh - 170px);
+    min-height: 540px;
+    gap: 0;
+  }
+
+  /* When a chat conversation is selected on mobile/tablet: show chat pane only */
+  .inbox-layout-container.has-convo-selected .inbox-list-pane {
+    display: none !important;
+  }
+
+  .inbox-layout-container.has-convo-selected .inbox-chat-pane {
+    display: flex !important;
+    width: 100%;
+    border-left: none;
+  }
+
+  /* When no chat conversation is selected on mobile/tablet: show contact list only */
+  .inbox-layout-container:not(.has-convo-selected) .inbox-chat-pane {
+    display: none !important;
+  }
+
+  .inbox-layout-container:not(.has-convo-selected) .inbox-list-pane {
+    display: flex !important;
+    width: 100%;
+    border-right: none;
+  }
+}
+
