@@ -82,6 +82,8 @@ export default function BroadcastPage() {
   // Scheduling
   const [isScheduled, setIsScheduled] = useState(false);
   const [scheduledTime, setScheduledTime] = useState('');
+  const [isCampaignScheduled, setIsCampaignScheduled] = useState(false);
+  const [scheduledQueue, setScheduledQueue] = useState([]);
 
   // Execution & Progress state
   const [sending, setSending] = useState(false);
@@ -204,8 +206,24 @@ export default function BroadcastPage() {
       } catch (e) {
         // Fallback default 250ms
       }
+
+      // Load active scheduled campaigns
+      await loadScheduledQueue();
     } catch (err) {
       console.error('Failed to load broadcast pre-requisites:', err);
+    }
+  }
+
+  async function loadScheduledQueue() {
+    try {
+      const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
+      const res = await fetch('/api/campaigns', { headers });
+      const data = await res.json();
+      if (data.success && Array.isArray(data.data)) {
+        setScheduledQueue(data.data.filter(c => c.status === 'SCHEDULED'));
+      }
+    } catch (e) {
+      console.warn('Scheduled queue fetch note:', e.message);
     }
   }
 
@@ -432,6 +450,10 @@ export default function BroadcastPage() {
       alert('Please select an approved WhatsApp template.');
       return;
     }
+    if (isScheduled && !scheduledTime) {
+      alert('Please specify a future date and time for the scheduled dispatch.');
+      return;
+    }
 
     setSending(true);
     setShowProgressModal(true);
@@ -467,15 +489,33 @@ export default function BroadcastPage() {
         throw new Error(data.message || 'Broadcast launch failed');
       }
 
+      const isSched = Boolean(isScheduled && scheduledTime);
       setActiveCampaign(data.campaignId);
-      setProgressStats(prev => ({ ...prev, status: 'IN_PROGRESS', total: data.totalRecipients || prev.total }));
-      setStreamLogs(prev => [
-        ...prev,
-        { time: new Date().toLocaleTimeString(), text: `Campaign #${data.campaignId} created with ${throttleDelay}ms pacing! Initializing real-time SSE telemetry...` }
-      ]);
+      setIsCampaignScheduled(isSched);
 
-      // Connect to SSE stream for live progress
-      connectSSEStream(data.campaignId);
+      if (isSched) {
+        setProgressStats({
+          total: data.totalRecipients || validationStats.valid || fileRows.length || 0,
+          sent: 0,
+          failed: 0,
+          status: 'SCHEDULED'
+        });
+        setStreamLogs([
+          { time: new Date().toLocaleTimeString(), text: `⏰ Campaign '${campaignName || data.campaignId}' scheduled for ${new Date(scheduledTime).toLocaleString()}!` },
+          { time: new Date().toLocaleTimeString(), text: `Status: SCHEDULED. Target contacts: ${data.totalRecipients || validationStats.valid || fileRows.length || 0}. The scheduler will auto-launch this at the specified time.` },
+          { time: new Date().toLocaleTimeString(), text: `ℹ️ You can trigger "Run Now" below to dispatch immediately or "Cancel Schedule" if you change your mind.` }
+        ]);
+        loadScheduledQueue();
+      } else {
+        setProgressStats(prev => ({ ...prev, status: 'IN_PROGRESS', total: data.totalRecipients || prev.total }));
+        setStreamLogs(prev => [
+          ...prev,
+          { time: new Date().toLocaleTimeString(), text: `Campaign #${data.campaignId} created with ${throttleDelay}ms pacing! Initializing real-time SSE telemetry...` }
+        ]);
+
+        // Connect to SSE stream for live progress
+        connectSSEStream(data.campaignId);
+      }
     } catch (err) {
       setProgressStats(prev => ({ ...prev, status: 'FAILED' }));
       setStreamLogs(prev => [...prev, { time: new Date().toLocaleTimeString(), text: `Error: ${err.message}` }]);
@@ -618,11 +658,12 @@ export default function BroadcastPage() {
     }
   }
 
-  async function handleCancelCampaign() {
-    if (!activeCampaign) return;
-    if (!confirm('Are you sure you want to stop and cancel this broadcast?')) return;
+  async function handleCancelCampaign(campaignId) {
+    const targetId = campaignId || activeCampaign;
+    if (!targetId) return;
+    if (!confirm('Are you sure you want to stop and cancel this broadcast campaign?')) return;
     try {
-      const res = await fetch(`/api/campaigns/${activeCampaign}/cancel`, {
+      const res = await fetch(`/api/campaigns/${targetId}/cancel`, {
         method: 'POST',
         headers: token ? { 'Authorization': `Bearer ${token}` } : {}
       });
@@ -633,7 +674,39 @@ export default function BroadcastPage() {
           { time: new Date().toLocaleTimeString(), text: '🛑 Campaign cancelled by operator.' },
           ...prev
         ]);
+        loadScheduledQueue();
+        alert('✓ Broadcast campaign has been cancelled.');
+      } else {
+        alert(data.message || 'Failed to cancel campaign');
       }
+    } catch (e) {
+      alert(e.message);
+    }
+  }
+
+  async function handleRunScheduledNow(campaignId) {
+    const targetId = campaignId || activeCampaign;
+    if (!targetId) return;
+    if (!confirm('Do you want to launch this scheduled campaign immediately right now?')) return;
+    try {
+      const res = await fetch(`/api/campaigns/${targetId}/run-now`, {
+        method: 'POST',
+        headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.message || 'Failed to trigger scheduled campaign');
+      }
+      setIsCampaignScheduled(false);
+      setShowProgressModal(true);
+      setActiveCampaign(targetId);
+      setProgressStats(prev => ({ ...prev, status: 'IN_PROGRESS' }));
+      setStreamLogs(prev => [
+        { time: new Date().toLocaleTimeString(), text: '🚀 Operator triggered scheduled broadcast immediately! Initializing live SSE telemetry...' },
+        ...prev
+      ]);
+      connectSSEStream(targetId);
+      loadScheduledQueue();
     } catch (e) {
       alert(e.message);
     }
@@ -656,6 +729,94 @@ export default function BroadcastPage() {
           Target customer lists with official Meta-approved templates, variable tag mapping, and live smartphone preview.
         </p>
       </div>
+
+      {/* Upcoming Scheduled Broadcasts Queue Banner */}
+      {scheduledQueue.length > 0 && (
+        <div style={{
+          background: '#F5F3FF',
+          border: '1px solid #DDD6FE',
+          borderRadius: '12px',
+          padding: '16px 20px',
+          marginBottom: '24px',
+          boxShadow: 'var(--shadow-xs)'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <Clock size={20} color="#7C3AED" />
+              <span style={{ fontWeight: 800, color: '#5B21B6', fontSize: '0.95rem' }}>
+                Upcoming Scheduled Broadcasts ({scheduledQueue.length})
+              </span>
+            </div>
+            <span style={{ fontSize: '0.78rem', color: '#6D28D9' }}>
+              These campaigns are queued to send automatically at their scheduled times.
+            </span>
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            {scheduledQueue.map(item => (
+              <div
+                key={item.id}
+                style={{
+                  background: '#FFFFFF',
+                  border: '1px solid #E9D5FF',
+                  borderRadius: '10px',
+                  padding: '12px 16px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: '12px',
+                  flexWrap: 'wrap'
+                }}
+              >
+                <div>
+                  <div style={{ fontWeight: 700, color: '#0F172A', fontSize: '0.9rem' }}>
+                    {item.name}
+                  </div>
+                  <div style={{ fontSize: '0.75rem', color: '#64748B', display: 'flex', gap: '12px', marginTop: '2px', flexWrap: 'wrap' }}>
+                    <span>Template: <strong>{item.template_name}</strong></span>
+                    <span>Targets: <strong>{item.valid_contacts || item.total_contacts}</strong></span>
+                    <span style={{ color: '#7C3AED', fontWeight: 600 }}>
+                      ⏰ Scheduled for: <strong>{new Date(item.scheduled_at).toLocaleString()}</strong>
+                    </span>
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button
+                    type="button"
+                    onClick={() => handleRunScheduledNow(item.id)}
+                    className="btn btn-secondary"
+                    style={{
+                      padding: '5px 12px',
+                      fontSize: '0.75rem',
+                      background: '#DCFCE7',
+                      color: '#15803D',
+                      borderColor: '#86EFAC',
+                      fontWeight: 700,
+                      gap: '4px'
+                    }}
+                    title="Launch this campaign immediately right now"
+                  >
+                    <Play size={12} />
+                    <span>Run Now</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleCancelCampaign(item.id)}
+                    className="btn btn-danger"
+                    style={{ padding: '5px 12px', fontSize: '0.75rem', gap: '4px' }}
+                    title="Cancel this scheduled broadcast"
+                  >
+                    <StopCircle size={12} />
+                    <span>Cancel Schedule</span>
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Stepped Progress Indicator */}
       <div style={{
@@ -1806,19 +1967,27 @@ export default function BroadcastPage() {
                   width: '36px',
                   height: '36px',
                   borderRadius: '10px',
-                  background: progressStats.status === 'COMPLETED' ? '#DCFCE7' : '#F0FDF4',
+                  background: (isCampaignScheduled || progressStats.status === 'SCHEDULED') ? '#F3E8FF' : (progressStats.status === 'COMPLETED' ? '#DCFCE7' : '#F0FDF4'),
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center'
                 }}>
-                  <Send size={18} color={progressStats.status === 'COMPLETED' ? '#15803D' : '#128C7E'} />
+                  {(isCampaignScheduled || progressStats.status === 'SCHEDULED') ? (
+                    <Clock size={18} color="#7C3AED" />
+                  ) : (
+                    <Send size={18} color={progressStats.status === 'COMPLETED' ? '#15803D' : '#128C7E'} />
+                  )}
                 </div>
                 <div>
                   <h3 style={{ fontSize: '1.15rem', fontWeight: 800, color: '#0F172A' }}>
-                    {progressStats.status === 'COMPLETED' ? 'Broadcast Dispatched!' : 'Broadcasting in Progress...'}
+                    {(isCampaignScheduled || progressStats.status === 'SCHEDULED')
+                      ? 'Campaign Scheduled in Queue'
+                      : progressStats.status === 'COMPLETED'
+                      ? 'Broadcast Dispatched!'
+                      : 'Broadcasting in Progress...'}
                   </h3>
                   <div style={{ fontSize: '0.75rem', color: '#64748B' }}>
-                    Campaign #{activeCampaign} • Live SSE Stream
+                    Campaign #{activeCampaign} • {(isCampaignScheduled || progressStats.status === 'SCHEDULED') ? 'Scheduled Dispatch' : 'Live SSE Stream'}
                   </div>
                 </div>
               </div>
@@ -1865,6 +2034,55 @@ export default function BroadcastPage() {
                 }} />
               </div>
             </div>
+
+            {/* Scheduled Information Card inside modal */}
+            {(isCampaignScheduled || progressStats.status === 'SCHEDULED') && progressStats.status !== 'CANCELLED' && progressStats.status !== 'IN_PROGRESS' && (
+              <div style={{
+                background: '#F5F3FF',
+                border: '1px solid #DDD6FE',
+                borderRadius: '10px',
+                padding: '14px 16px',
+                marginBottom: '16px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: '12px',
+                flexWrap: 'wrap'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <Clock size={22} color="#7C3AED" />
+                  <div>
+                    <div style={{ fontSize: '0.9rem', fontWeight: 800, color: '#5B21B6' }}>
+                      Scheduled for {scheduledTime ? new Date(scheduledTime).toLocaleString() : 'Future Date/Time'}
+                    </div>
+                    <div style={{ fontSize: '0.75rem', color: '#6D28D9' }}>
+                      Waiting in queue. You can run it immediately or cancel this schedule.
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button
+                    type="button"
+                    onClick={() => handleRunScheduledNow(activeCampaign)}
+                    className="btn btn-primary"
+                    style={{ fontSize: '0.78rem', padding: '6px 12px', background: '#16A34A', border: 'none', gap: '6px' }}
+                  >
+                    <Play size={13} />
+                    <span>Run Now</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleCancelCampaign(activeCampaign)}
+                    className="btn btn-danger"
+                    style={{ fontSize: '0.78rem', padding: '6px 12px', gap: '6px' }}
+                  >
+                    <StopCircle size={13} />
+                    <span>Cancel Schedule</span>
+                  </button>
+                </div>
+              </div>
+            )}
 
             {/* Live Throttle & Pacing Adjuster */}
             <div style={{
@@ -1956,7 +2174,37 @@ export default function BroadcastPage() {
 
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', flexWrap: 'wrap' }}>
               <div style={{ display: 'flex', gap: '8px' }}>
-                {progressStats.status !== 'COMPLETED' && progressStats.status !== 'CANCELLED' && (
+                {(isCampaignScheduled || progressStats.status === 'SCHEDULED') && progressStats.status !== 'CANCELLED' ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => handleRunScheduledNow(activeCampaign)}
+                      className="btn btn-secondary"
+                      style={{
+                        padding: '7px 14px',
+                        fontSize: '0.78rem',
+                        gap: '6px',
+                        background: '#DCFCE7',
+                        color: '#15803D',
+                        border: '1px solid #86EFAC',
+                        fontWeight: 700
+                      }}
+                    >
+                      <Play size={13} />
+                      <span>Run Now Immediately</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleCancelCampaign(activeCampaign)}
+                      className="btn btn-danger"
+                      style={{ padding: '7px 14px', fontSize: '0.78rem', gap: '6px' }}
+                    >
+                      <StopCircle size={13} />
+                      <span>Cancel Schedule</span>
+                    </button>
+                  </>
+                ) : progressStats.status !== 'COMPLETED' && progressStats.status !== 'CANCELLED' && (
                   <>
                     <button
                       type="button"
@@ -1970,7 +2218,7 @@ export default function BroadcastPage() {
 
                     <button
                       type="button"
-                      onClick={handleCancelCampaign}
+                      onClick={() => handleCancelCampaign(activeCampaign)}
                       className="btn btn-danger"
                       style={{ padding: '7px 12px', fontSize: '0.78rem', gap: '6px' }}
                     >

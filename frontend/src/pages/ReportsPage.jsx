@@ -11,7 +11,13 @@ import {
   RefreshCw,
   ExternalLink,
   CheckCircle2,
-  AlertCircle
+  AlertCircle,
+  Play,
+  Pause,
+  StopCircle,
+  Trash2,
+  Calendar,
+  AlertTriangle
 } from 'lucide-react';
 
 export default function ReportsPage() {
@@ -113,6 +119,104 @@ export default function ReportsPage() {
   function handleViewCampaignRecipients(campId) {
     setSelectedCampaignId(campId);
     setActiveTab('recipients');
+  }
+
+  // Cancel scheduled or running campaign
+  async function handleCancelCampaign(campId, campName) {
+    if (!window.confirm(`Are you sure you want to cancel the campaign "${campName}"?`)) {
+      return;
+    }
+    try {
+      const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
+      const res = await fetch(`/api/campaigns/${campId}/cancel`, {
+        method: 'POST',
+        headers
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.message || 'Failed to cancel campaign');
+      }
+      alert(`✓ Campaign "${campName}" was cancelled.`);
+      loadReportsData();
+    } catch (err) {
+      alert(`Error cancelling campaign: ${err.message}`);
+    }
+  }
+
+  // Trigger scheduled campaign immediately
+  async function handleRunNow(campId, campName) {
+    if (!window.confirm(`Launch scheduled campaign "${campName}" immediately right now?`)) {
+      return;
+    }
+    try {
+      const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
+      const res = await fetch(`/api/campaigns/${campId}/run-now`, {
+        method: 'POST',
+        headers
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.message || 'Failed to trigger campaign');
+      }
+      alert(`🚀 Campaign "${campName}" has been triggered! Refreshing live status...`);
+      loadReportsData();
+    } catch (err) {
+      alert(`Error starting campaign: ${err.message}`);
+    }
+  }
+
+  // Pause running broadcast
+  async function handlePauseCampaign(campId, campName) {
+    try {
+      const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
+      const res = await fetch(`/api/campaigns/${campId}/pause`, {
+        method: 'POST',
+        headers
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.message || 'Failed to pause campaign');
+      loadReportsData();
+    } catch (err) {
+      alert(`Error pausing campaign: ${err.message}`);
+    }
+  }
+
+  // Resume paused broadcast
+  async function handleResumeCampaign(campId, campName) {
+    try {
+      const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
+      const res = await fetch(`/api/campaigns/${campId}/resume`, {
+        method: 'POST',
+        headers
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.message || 'Failed to resume campaign');
+      loadReportsData();
+    } catch (err) {
+      alert(`Error resuming campaign: ${err.message}`);
+    }
+  }
+
+  // Delete campaign and its recipient audit rows
+  async function handleDeleteCampaign(campId, campName) {
+    if (!window.confirm(`Are you sure you want to permanently delete campaign "${campName}" and all its logs?`)) {
+      return;
+    }
+    try {
+      const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
+      const res = await fetch(`/api/campaigns/${campId}`, {
+        method: 'DELETE',
+        headers
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.message || 'Failed to delete campaign');
+      }
+      setPastCampaigns(prev => prev.filter(c => c.id !== campId));
+      if (selectedCampaignId === campId) setSelectedCampaignId('ALL');
+    } catch (err) {
+      alert(`Error deleting campaign: ${err.message}`);
+    }
   }
 
   const filteredCampaignReports = campaignReports.filter(r => {
@@ -349,101 +453,273 @@ export default function ReportsPage() {
 
       {/* TAB 1: PAST BROADCAST CAMPAIGNS TABLE */}
       {activeTab === 'campaigns' && (
-        <div className="saas-card" style={{ overflow: 'hidden' }}>
-          <div style={{ overflowX: 'auto', maxHeight: '600px' }}>
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>Campaign Name</th>
-                  <th>Source File</th>
-                  <th>Template Name</th>
-                  <th>Total Targets</th>
-                  <th>Dispatched</th>
-                  <th>Failed</th>
-                  <th>Status</th>
-                  <th>Execution Date</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {loading && pastCampaigns.length === 0 ? (
+        <div>
+          {pastCampaigns.filter(c => c.status === 'SCHEDULED').length > 0 && (
+            <div style={{
+              background: '#F5F3FF',
+              border: '1px solid #DDD6FE',
+              borderRadius: '10px',
+              padding: '14px 18px',
+              marginBottom: '16px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              flexWrap: 'wrap',
+              gap: '12px'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <Clock size={20} color="#7C3AED" />
+                <div>
+                  <div style={{ fontWeight: 800, color: '#5B21B6', fontSize: '0.875rem' }}>
+                    {pastCampaigns.filter(c => c.status === 'SCHEDULED').length} Broadcast Campaign(s) Scheduled in Queue
+                  </div>
+                  <div style={{ fontSize: '0.78rem', color: '#6D28D9', marginTop: '2px' }}>
+                    Waiting for scheduled dispatch time. You can dispatch them immediately with "Run Now" or cancel them before launch.
+                  </div>
+                </div>
+              </div>
+              <button
+                onClick={() => setSearchQuery('scheduled')}
+                className="btn btn-secondary"
+                style={{ fontSize: '0.75rem', padding: '6px 14px', background: '#FFFFFF', borderColor: '#DDD6FE', color: '#6D28D9', fontWeight: 700 }}
+              >
+                View Scheduled Only
+              </button>
+            </div>
+          )}
+
+          <div className="saas-card" style={{ overflow: 'hidden' }}>
+            <div style={{ overflowX: 'auto', maxHeight: '600px' }}>
+              <table className="data-table">
+                <thead>
                   <tr>
-                    <td colSpan="9" style={{ textAlign: 'center', padding: '36px', color: '#64748B' }}>
-                      <RefreshCw size={20} className="pulse-glow" style={{ margin: '0 auto 8px auto' }} />
-                      <div>Loading past campaign reports...</div>
-                    </td>
+                    <th>Campaign Name</th>
+                    <th>Source File</th>
+                    <th>Template Name</th>
+                    <th>Total Targets</th>
+                    <th>Dispatched</th>
+                    <th>Failed</th>
+                    <th>Status</th>
+                    <th>Schedule / Execution Date</th>
+                    <th>Actions</th>
                   </tr>
-                ) : filteredPastCampaigns.length === 0 ? (
-                  <tr>
-                    <td colSpan="9" style={{ textAlign: 'center', padding: '40px', color: '#94A3B8' }}>
-                      No broadcast campaigns found matching current filter.
-                    </td>
-                  </tr>
-                ) : (
-                  filteredPastCampaigns.map(camp => (
-                    <tr key={camp.id}>
-                      <td>
-                        <div style={{ fontWeight: 700, color: '#0F172A' }}>{camp.name}</div>
-                        <div style={{ fontSize: '0.7rem', color: '#94A3B8', fontFamily: 'var(--font-mono)' }}>
-                          ID: {camp.id}
-                        </div>
-                      </td>
-                      <td style={{ fontSize: '0.78rem', color: '#475569' }}>
-                        {camp.file_name || 'contacts.xlsx'}
-                      </td>
-                      <td>
-                        <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', background: '#F1F5F9', padding: '2px 8px', borderRadius: '4px', fontWeight: 600 }}>
-                          {camp.template_name || 'Template'}
-                        </span>
-                      </td>
-                      <td style={{ fontWeight: 700 }}>
-                        {camp.valid_contacts || camp.total_contacts || 0}
-                      </td>
-                      <td style={{ fontWeight: 700, color: '#16A34A' }}>
-                        {camp.sent_count || 0}
-                      </td>
-                      <td style={{ fontWeight: 700, color: camp.failed_count > 0 ? '#DC2626' : '#94A3B8' }}>
-                        {camp.failed_count || 0}
-                      </td>
-                      <td>
-                        <span className={`badge ${
-                          camp.status === 'COMPLETED' ? 'badge-success' :
-                          camp.status === 'RUNNING' ? 'badge-info' :
-                          camp.status === 'FAILED' ? 'badge-danger' : 'badge-neutral'
-                        }`}>
-                          {camp.status || 'COMPLETED'}
-                        </span>
-                      </td>
-                      <td style={{ fontSize: '0.75rem', color: '#64748B' }}>
-                        {camp.created_at ? new Date(camp.created_at).toLocaleString() : 'N/A'}
-                      </td>
-                      <td>
-                        <div style={{ display: 'flex', gap: '6px' }}>
-                          <button
-                            onClick={() => handleViewCampaignRecipients(camp.id)}
-                            className="btn btn-secondary"
-                            style={{ padding: '4px 8px', fontSize: '0.72rem', gap: '4px' }}
-                            title="View individual recipient logs"
-                          >
-                            <Users size={12} />
-                            <span>Recipients</span>
-                          </button>
-                          <button
-                            onClick={() => handleExport('xlsx', camp.id)}
-                            className="btn btn-secondary"
-                            style={{ padding: '4px 8px', fontSize: '0.72rem', gap: '4px' }}
-                            title="Export campaign to Excel"
-                          >
-                            <Download size={12} />
-                            <span>Export</span>
-                          </button>
-                        </div>
+                </thead>
+                <tbody>
+                  {loading && pastCampaigns.length === 0 ? (
+                    <tr>
+                      <td colSpan="9" style={{ textAlign: 'center', padding: '36px', color: '#64748B' }}>
+                        <RefreshCw size={20} className="pulse-glow" style={{ margin: '0 auto 8px auto' }} />
+                        <div>Loading past campaign reports...</div>
                       </td>
                     </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
+                  ) : filteredPastCampaigns.length === 0 ? (
+                    <tr>
+                      <td colSpan="9" style={{ textAlign: 'center', padding: '40px', color: '#94A3B8' }}>
+                        No broadcast campaigns found matching current filter.
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredPastCampaigns.map(camp => (
+                      <tr key={camp.id}>
+                        <td>
+                          <div style={{ fontWeight: 700, color: '#0F172A' }}>{camp.name}</div>
+                          <div style={{ fontSize: '0.7rem', color: '#94A3B8', fontFamily: 'var(--font-mono)' }}>
+                            ID: {camp.id}
+                          </div>
+                        </td>
+                        <td style={{ fontSize: '0.78rem', color: '#475569' }}>
+                          {camp.file_name || 'contacts.xlsx'}
+                        </td>
+                        <td>
+                          <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', background: '#F1F5F9', padding: '2px 8px', borderRadius: '4px', fontWeight: 600 }}>
+                            {camp.template_name || 'Template'}
+                          </span>
+                        </td>
+                        <td style={{ fontWeight: 700 }}>
+                          {camp.valid_contacts || camp.total_contacts || 0}
+                        </td>
+                        <td style={{ fontWeight: 700, color: '#16A34A' }}>
+                          {camp.sent_count || 0}
+                        </td>
+                        <td style={{ fontWeight: 700, color: camp.failed_count > 0 ? '#DC2626' : '#94A3B8' }}>
+                          {camp.failed_count || 0}
+                        </td>
+                        <td>
+                          {camp.status === 'SCHEDULED' ? (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                              <span className="badge" style={{ background: '#EDE9FE', color: '#6D28D9', border: '1px solid #DDD6FE', fontWeight: 800, fontSize: '0.72rem' }}>
+                                ⏰ SCHEDULED
+                              </span>
+                              {camp.scheduled_at && (
+                                <span style={{ fontSize: '0.68rem', color: '#6D28D9', fontWeight: 600 }}>
+                                  {new Date(camp.scheduled_at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                                </span>
+                              )}
+                            </div>
+                          ) : camp.status === 'RUNNING' ? (
+                            <span className="badge badge-info" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                              <span className="pulse-glow" style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#2563EB' }} />
+                              RUNNING
+                            </span>
+                          ) : camp.status === 'PAUSED' ? (
+                            <span className="badge" style={{ background: '#FEF3C7', color: '#B45309', border: '1px solid #FDE68A', fontWeight: 700 }}>
+                              ⏸ PAUSED
+                            </span>
+                          ) : camp.status === 'CANCELLED' ? (
+                            <span className="badge" style={{ background: '#F1F5F9', color: '#64748B', border: '1px solid #CBD5E1', fontWeight: 700 }}>
+                              🛑 CANCELLED
+                            </span>
+                          ) : camp.status === 'FAILED' ? (
+                            <span className="badge badge-danger">
+                              ✕ FAILED
+                            </span>
+                          ) : (
+                            <span className="badge badge-success">
+                              ✓ {camp.status || 'COMPLETED'}
+                            </span>
+                          )}
+                        </td>
+                        <td style={{ fontSize: '0.75rem', color: '#64748B' }}>
+                          {camp.scheduled_at ? (
+                            <div>
+                              <div style={{ fontWeight: 600, color: '#0F172A' }}>{new Date(camp.scheduled_at).toLocaleString()}</div>
+                              <div style={{ fontSize: '0.68rem', color: '#94A3B8' }}>Created: {new Date(camp.created_at).toLocaleDateString()}</div>
+                            </div>
+                          ) : (
+                            camp.created_at ? new Date(camp.created_at).toLocaleString() : 'N/A'
+                          )}
+                        </td>
+                        <td>
+                          <div style={{ display: 'flex', gap: '5px', alignItems: 'center', flexWrap: 'wrap' }}>
+                            {/* SCHEDULED CAMPAIGN ACTIONS */}
+                            {camp.status === 'SCHEDULED' && (
+                              <>
+                                <button
+                                  onClick={() => handleRunNow(camp.id, camp.name)}
+                                  className="btn"
+                                  style={{
+                                    padding: '4px 8px',
+                                    fontSize: '0.72rem',
+                                    gap: '4px',
+                                    background: '#DCFCE7',
+                                    color: '#15803D',
+                                    border: '1px solid #86EFAC',
+                                    fontWeight: 700
+                                  }}
+                                  title="Run this scheduled campaign immediately"
+                                >
+                                  <Play size={12} />
+                                  <span>Run Now</span>
+                                </button>
+                                <button
+                                  onClick={() => handleCancelCampaign(camp.id, camp.name)}
+                                  className="btn"
+                                  style={{
+                                    padding: '4px 8px',
+                                    fontSize: '0.72rem',
+                                    gap: '4px',
+                                    background: '#FEE2E2',
+                                    color: '#DC2626',
+                                    border: '1px solid #FCA5A5',
+                                    fontWeight: 700
+                                  }}
+                                  title="Cancel this scheduled broadcast"
+                                >
+                                  <StopCircle size={12} />
+                                  <span>Cancel</span>
+                                </button>
+                              </>
+                            )}
+
+                            {/* RUNNING CAMPAIGN ACTIONS */}
+                            {camp.status === 'RUNNING' && (
+                              <>
+                                <button
+                                  onClick={() => handlePauseCampaign(camp.id, camp.name)}
+                                  className="btn btn-secondary"
+                                  style={{ padding: '4px 8px', fontSize: '0.72rem', gap: '4px' }}
+                                  title="Pause broadcast"
+                                >
+                                  <Pause size={12} color="#D97706" />
+                                  <span>Pause</span>
+                                </button>
+                                <button
+                                  onClick={() => handleCancelCampaign(camp.id, camp.name)}
+                                  className="btn btn-danger"
+                                  style={{ padding: '4px 8px', fontSize: '0.72rem', gap: '4px' }}
+                                  title="Stop and cancel ongoing broadcast"
+                                >
+                                  <StopCircle size={12} />
+                                  <span>Stop</span>
+                                </button>
+                              </>
+                            )}
+
+                            {/* PAUSED CAMPAIGN ACTIONS */}
+                            {camp.status === 'PAUSED' && (
+                              <>
+                                <button
+                                  onClick={() => handleResumeCampaign(camp.id, camp.name)}
+                                  className="btn btn-secondary"
+                                  style={{ padding: '4px 8px', fontSize: '0.72rem', gap: '4px' }}
+                                  title="Resume broadcast"
+                                >
+                                  <Play size={12} color="#16A34A" />
+                                  <span>Resume</span>
+                                </button>
+                                <button
+                                  onClick={() => handleCancelCampaign(camp.id, camp.name)}
+                                  className="btn btn-danger"
+                                  style={{ padding: '4px 8px', fontSize: '0.72rem', gap: '4px' }}
+                                  title="Cancel paused broadcast"
+                                >
+                                  <StopCircle size={12} />
+                                  <span>Cancel</span>
+                                </button>
+                              </>
+                            )}
+
+                            {/* RECIPIENTS AUDIT */}
+                            <button
+                              onClick={() => handleViewCampaignRecipients(camp.id)}
+                              className="btn btn-secondary"
+                              style={{ padding: '4px 8px', fontSize: '0.72rem', gap: '4px' }}
+                              title="View individual recipient logs"
+                            >
+                              <Users size={12} />
+                              <span>Recipients</span>
+                            </button>
+
+                            {/* EXPORT DATA */}
+                            <button
+                              onClick={() => handleExport('xlsx', camp.id)}
+                              className="btn btn-secondary"
+                              style={{ padding: '4px 8px', fontSize: '0.72rem', gap: '4px' }}
+                              title="Export campaign to Excel"
+                            >
+                              <Download size={12} />
+                              <span>Export</span>
+                            </button>
+
+                            {/* DELETE CAMPAIGN */}
+                            {camp.id !== 'campaign_booking_lifecycle' && (
+                              <button
+                                onClick={() => handleDeleteCampaign(camp.id, camp.name)}
+                                className="btn btn-secondary"
+                                style={{ padding: '4px 6px', fontSize: '0.72rem', color: '#94A3B8' }}
+                                title="Delete campaign record"
+                              >
+                                <Trash2 size={12} />
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       )}

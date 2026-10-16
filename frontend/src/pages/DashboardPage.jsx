@@ -331,12 +331,21 @@ export default function DashboardPage({ setActiveTab }) {
                           </div>
                         </td>
                         <td>
-                          <span className={`badge ${
-                            camp.status === 'COMPLETED' ? 'badge-success' :
-                            camp.status === 'IN_PROGRESS' ? 'badge-info' : 'badge-neutral'
-                          }`}>
-                            {camp.status || 'COMPLETED'}
-                          </span>
+                          {camp.status === 'SCHEDULED' ? (
+                            <span className="badge" style={{ background: '#EDE9FE', color: '#6D28D9', border: '1px solid #DDD6FE', fontWeight: 800 }}>
+                              ⏰ SCHEDULED
+                            </span>
+                          ) : (
+                            <span className={`badge ${
+                              camp.status === 'COMPLETED' ? 'badge-success' :
+                              camp.status === 'RUNNING' || camp.status === 'IN_PROGRESS' ? 'badge-info' :
+                              camp.status === 'PAUSED' ? 'badge-warning' :
+                              camp.status === 'CANCELLED' ? 'badge-neutral' :
+                              camp.status === 'FAILED' ? 'badge-danger' : 'badge-neutral'
+                            }`}>
+                              {camp.status || 'COMPLETED'}
+                            </span>
+                          )}
                         </td>
                       </tr>
                     );
