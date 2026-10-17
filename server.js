@@ -24,6 +24,12 @@ if (fs.existsSync(distPath)) {
 }
 app.use(express.static(publicPath));
 
+const uploadsPath = path.join(__dirname, "public", "uploads");
+if (!fs.existsSync(uploadsPath)) {
+  fs.mkdirSync(uploadsPath, { recursive: true });
+}
+app.use("/uploads", express.static(uploadsPath));
+
 const webhookController = require("./src/controllers/webhookController");
 
 // Direct Root-level Webhook endpoints for Meta (https://domain/webhook)

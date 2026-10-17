@@ -294,41 +294,122 @@ router.post("/replies/:id/mark-read", optionalAuth, webhookController.markAsRead
 router.post("/replies/mark-all-read", optionalAuth, webhookController.markAllAsRead);
 router.delete("/replies/:id", optionalAuth, webhookController.deleteReply);
 
-// Direct inbox reply by phone/contact
-router.post("/inbox/reply", optionalAuth, async (req, res) => {
+// Direct inbox reply by phone/contact (Supports formatted multi-line text, images, and videos)
+const { sendTextMessage, sendMediaMessage } = require("../services/metaWhatsAppService");
+
+router.post("/inbox/reply", optionalAuth, mediaUpload.single("file"), async (req, res) => {
   try {
-    const { to, message, replyId } = req.body || {};
-    const text = message || req.body?.replyText;
-
-    if (!text || !String(text).trim()) {
-      return res.status(400).json({ success: false, message: "Reply message text is required." });
-    }
-
-    if (replyId) {
-      req.params = { id: replyId };
-      req.body.replyText = text;
-      return webhookController.sendManualReply(req, res);
-    }
+    const { to, message, replyId, mediaUrl, mediaId, mediaType: clientMediaType } = req.body || {};
+    const text = message !== undefined ? String(message) : (req.body?.replyText !== undefined ? String(req.body.replyText) : "");
 
     const targetPhone = cleanPhone(to || "", getSetting("DEFAULT_COUNTRY_CODE") || "91");
     if (!targetPhone) {
       return res.status(400).json({ success: false, message: "Recipient phone number is required." });
     }
 
-    const { sendTextMessage } = require("../services/metaWhatsAppService");
-    const sendRes = await sendTextMessage({ to: targetPhone, body: text });
+    if (!req.file && !mediaUrl && !mediaId && !text.trim()) {
+      return res.status(400).json({ success: false, message: "Reply message or media attachment is required." });
+    }
+
+    let sendRes;
+    let finalMediaUrl = mediaUrl || null;
+    let finalMediaType = clientMediaType || null;
+    let metaMessageId = null;
+
+    // Case 1: File attachment uploaded (Image or Video)
+    if (req.file) {
+      const isVideo = req.file.mimetype.startsWith("video/");
+      const isImage = req.file.mimetype.startsWith("image/");
+      finalMediaType = isVideo ? "video" : (isImage ? "image" : (clientMediaType || "document"));
+      finalMediaUrl = `/uploads/${req.file.filename}`;
+
+      const host = req.get("host");
+      const protocol = req.protocol === "https" || req.headers["x-forwarded-proto"] === "https" ? "https" : "http";
+      const fullUrl = `${protocol}://${host}${finalMediaUrl}`;
+
+      let metaMediaId = null;
+      try {
+        const fileBuffer = fs.readFileSync(req.file.path);
+        const metaUp = await uploadMedia({
+          fileBuffer,
+          fileName: req.file.originalname,
+          mimeType: req.file.mimetype
+        });
+        if (metaUp?.mediaId) {
+          metaMediaId = metaUp.mediaId;
+        }
+      } catch (uErr) {
+        console.warn("[Inbox Reply] Direct Meta upload note:", uErr.message);
+      }
+
+      sendRes = await sendMediaMessage({
+        to: targetPhone,
+        type: finalMediaType,
+        mediaId: metaMediaId || null,
+        mediaUrl: !metaMediaId ? fullUrl : null,
+        caption: text.trim() ? text : ""
+      });
+      metaMessageId = sendRes.messageId;
+    } 
+    // Case 2: Media URL or Media ID provided without direct file upload
+    else if (finalMediaUrl || mediaId) {
+      const isVideo = (finalMediaUrl && finalMediaUrl.match(/\.(mp4|3gp|mov|webm)(\?.*)?$/i)) || clientMediaType === "video";
+      finalMediaType = isVideo ? "video" : (clientMediaType || "image");
+
+      sendRes = await sendMediaMessage({
+        to: targetPhone,
+        type: finalMediaType,
+        mediaId: mediaId || null,
+        mediaUrl: finalMediaUrl || null,
+        caption: text.trim() ? text : ""
+      });
+      metaMessageId = sendRes.messageId;
+    } 
+    // Case 3: Pure text message (formatted with spacing / line breaks)
+    else {
+      sendRes = await sendTextMessage({ to: targetPhone, body: text });
+      metaMessageId = sendRes.messageId;
+    }
+
+    const assignedId = metaMessageId || `out_${Date.now()}`;
+    const displayText = text || (finalMediaType ? `[${finalMediaType.toUpperCase()}]` : "");
 
     db.prepare(`
       INSERT INTO customer_replies (
         wa_message_id, from_phone, customer_name, message_type,
-        message_body, reply_text, reply_sent_at, reply_status, is_read, received_at
-      ) VALUES (?, ?, 'Customer', 'outbound', ?, ?, CURRENT_TIMESTAMP, 'SENT', 1, CURRENT_TIMESTAMP)
-    `).run(sendRes.messageId || `out_${Date.now()}`, targetPhone, text, text);
+        message_body, reply_text, media_url, media_type, media_caption,
+        reply_sent_at, reply_status, is_read, received_at
+      ) VALUES (?, ?, 'Customer', 'outbound', ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, 'SENT', 1, CURRENT_TIMESTAMP)
+    `).run(
+      assignedId,
+      targetPhone,
+      displayText,
+      displayText,
+      finalMediaUrl,
+      finalMediaType,
+      text || null
+    );
+
+    // Notify connected SSE telemetry / browser tabs of outgoing reply
+    try {
+      broadcastEngine.emit("webhook:reply_updated", {
+        wa_message_id: assignedId,
+        from_phone: targetPhone,
+        message_type: 'outbound',
+        message_body: displayText,
+        reply_text: displayText,
+        media_url: finalMediaUrl,
+        media_type: finalMediaType,
+        reply_status: 'SENT'
+      });
+    } catch (e) {}
 
     return res.status(200).json({
       success: true,
       message: "Reply dispatched successfully via WhatsApp.",
-      messageId: sendRes.messageId
+      messageId: assignedId,
+      mediaUrl: finalMediaUrl,
+      mediaType: finalMediaType
     });
   } catch (error) {
     console.error("Direct inbox reply error:", error);

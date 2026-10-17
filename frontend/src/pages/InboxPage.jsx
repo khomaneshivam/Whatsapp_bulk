@@ -12,7 +12,12 @@ import {
   Sparkles,
   ArrowLeft,
   X,
-  Phone
+  Phone,
+  Paperclip,
+  Image as ImageIcon,
+  Video,
+  FileVideo,
+  Play
 } from 'lucide-react';
 
 export default function InboxPage() {
@@ -24,8 +29,14 @@ export default function InboxPage() {
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
 
+  // Media attachment states (Images & Videos)
+  const [selectedMediaFile, setSelectedMediaFile] = useState(null);
+  const [mediaPreviewUrl, setMediaPreviewUrl] = useState(null);
+  const [mediaType, setMediaType] = useState(null); // 'image' | 'video'
+
   const messagesEndRef = useRef(null);
-  const inputRef = useRef(null);
+  const textareaRef = useRef(null);
+  const fileInputRef = useRef(null);
   const initialSelectionDone = useRef(false);
 
   useEffect(() => {
@@ -47,7 +58,7 @@ export default function InboxPage() {
   // Focus message input when switching conversations on desktop
   useEffect(() => {
     if (selectedConvo && typeof window !== 'undefined' && window.innerWidth >= 860) {
-      inputRef.current?.focus();
+      textareaRef.current?.focus();
     }
   }, [selectedConvo?.phone]);
 
@@ -96,16 +107,20 @@ export default function InboxPage() {
               id: r.id || `out_${Math.random()}`,
               from_phone: 'Agent',
               text: incomingText || r.reply_text || '',
+              media_url: r.media_url || null,
+              media_type: r.media_type || null,
               time: r.received_at,
               is_outbound: true,
               status: r.reply_status || 'SENT'
             });
           } else {
-            if (incomingText) {
+            if (incomingText || r.media_url) {
               convos[phoneKey].messages.push({
                 id: r.id,
                 from_phone: r.from_phone,
                 text: incomingText,
+                media_url: r.media_url || null,
+                media_type: r.media_type || null,
                 time: r.received_at,
                 is_outbound: false,
                 is_read: r.is_read
@@ -117,6 +132,8 @@ export default function InboxPage() {
                 id: `${r.id}_reply`,
                 from_phone: 'Agent',
                 text: r.reply_text,
+                media_url: r.media_url || null,
+                media_type: r.media_type || null,
                 time: r.reply_sent_at || r.received_at,
                 is_outbound: true,
                 status: r.reply_status || 'SENT',
@@ -131,7 +148,10 @@ export default function InboxPage() {
           c.messages.sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime());
           if (c.messages.length > 0) {
             const last = c.messages[c.messages.length - 1];
-            c.lastMessage = last.is_outbound ? `You: ${last.text}` : last.text;
+            const mediaTag = last.media_type ? (last.media_type === 'video' ? '🎬 Video' : '📷 Image') : '';
+            c.lastMessage = last.is_outbound 
+              ? (last.text ? `You: ${last.text}` : `You: [${mediaTag || 'Media'}]`) 
+              : (last.text ? last.text : `[${mediaTag || 'Media received'}]`);
             c.lastTime = last.time;
           }
         });
@@ -194,41 +214,104 @@ export default function InboxPage() {
     initialSelectionDone.current = true; // prevents background polling from forcing chat re-open
   }
 
+  function handleFileSelect(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const isVideo = file.type.startsWith('video/') || /\.(mp4|3gp|mov|webm)$/i.test(file.name);
+    const isImage = file.type.startsWith('image/') || /\.(jpg|jpeg|png|webp|gif)$/i.test(file.name);
+
+    if (!isImage && !isVideo) {
+      alert('Please select a valid image (JPG, PNG, WEBP) or video (MP4, 3GP, MOV).');
+      return;
+    }
+
+    if (file.size > 28 * 1024 * 1024) {
+      alert('Selected file is larger than 28MB. Please select a smaller media file.');
+      return;
+    }
+
+    setSelectedMediaFile(file);
+    setMediaType(isVideo ? 'video' : 'image');
+    setMediaPreviewUrl(URL.createObjectURL(file));
+
+    // Focus textarea so the user can immediately add a caption
+    setTimeout(() => {
+      textareaRef.current?.focus();
+    }, 50);
+  }
+
+  function handleClearMedia() {
+    if (mediaPreviewUrl && mediaPreviewUrl.startsWith('blob:')) {
+      URL.revokeObjectURL(mediaPreviewUrl);
+    }
+    setSelectedMediaFile(null);
+    setMediaPreviewUrl(null);
+    setMediaType(null);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  }
+
   async function handleSendReply(e) {
     if (e && e.preventDefault) e.preventDefault();
-    if (!replyText.trim() || !selectedConvo || sendingReply) return;
+    const hasText = Boolean(replyText && replyText.trim());
+    if (!hasText && !selectedMediaFile) return;
+    if (!selectedConvo || sendingReply) return;
 
-    const textToSend = replyText.trim();
+    const textToSend = replyText;
+    const mediaFile = selectedMediaFile;
+    const currentMediaType = mediaType;
+    const currentPreviewUrl = mediaPreviewUrl;
+
     setSendingReply(true);
 
     try {
-      const res = await fetch('/api/inbox/reply', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          to: selectedConvo.phone,
-          message: textToSend
-        })
-      });
+      let res;
+      if (mediaFile) {
+        const formData = new FormData();
+        formData.append('to', selectedConvo.phone);
+        formData.append('message', textToSend);
+        formData.append('file', mediaFile);
+
+        res = await fetch('/api/inbox/reply', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`
+          },
+          body: formData
+        });
+      } else {
+        res = await fetch('/api/inbox/reply', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({
+            to: selectedConvo.phone,
+            message: textToSend
+          })
+        });
+      }
+
       const data = await res.json();
       if (data.success) {
         const newMsg = {
-          id: `out_${Date.now()}`,
+          id: data.messageId || `out_${Date.now()}`,
           from_phone: 'Agent',
           text: textToSend,
+          media_url: data.mediaUrl || currentPreviewUrl,
+          media_type: data.mediaType || currentMediaType,
           time: new Date().toISOString(),
           is_outbound: true,
           status: 'SENT'
         };
 
         const updatedMessages = [...selectedConvo.messages, newMsg];
+        const mediaTag = newMsg.media_type ? (newMsg.media_type === 'video' ? '🎬 Video' : '📷 Image') : '';
         const updatedConvo = {
           ...selectedConvo,
           messages: updatedMessages,
-          lastMessage: `You: ${textToSend}`,
+          lastMessage: `You: ${textToSend ? textToSend : `[${mediaTag || 'Media'}]`}`,
           lastTime: newMsg.time
         };
 
@@ -237,6 +320,11 @@ export default function InboxPage() {
           prev.map(c => (c.phone === selectedConvo.phone ? updatedConvo : c))
         );
         setReplyText('');
+        handleClearMedia();
+
+        if (textareaRef.current) {
+          textareaRef.current.style.height = '42px';
+        }
       } else {
         alert(data.message || 'Failed to send reply');
       }
@@ -513,6 +601,10 @@ export default function InboxPage() {
                 {selectedConvo.messages.map((m, idx) => {
                   const isOutbound = m.is_outbound;
                   const displayTime = m.time ? new Date(m.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+                  const hasMedia = Boolean(m.media_url);
+                  const isVideo = m.media_type === 'video' || (m.media_url && /\.(mp4|3gp|mov|webm)(\?.*)?$/i.test(m.media_url));
+                  const isImage = m.media_type === 'image' || (m.media_url && /\.(jpg|jpeg|png|webp|gif)(\?.*)?$/i.test(m.media_url)) || (!isVideo && hasMedia);
+                  const msgText = m.text || m.message_body || m.message_text || '';
 
                   return (
                     <div
@@ -526,18 +618,65 @@ export default function InboxPage() {
                         borderRadius: isOutbound ? '12px 12px 2px 12px' : '12px 12px 12px 2px',
                         padding: '10px 14px',
                         boxShadow: 'var(--shadow-xs)',
-                        wordWrap: 'break-word'
+                        wordWrap: 'break-word',
+                        wordBreak: 'break-word'
                       }}
                     >
                       {m.is_auto && (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.68rem', fontWeight: 700, color: '#16A34A', marginBottom: '4px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.68rem', fontWeight: 700, color: '#16A34A', marginBottom: '6px' }}>
                           <Sparkles size={11} /> Auto-Reply Bot
                         </div>
                       )}
 
-                      <div style={{ fontSize: '0.875rem', lineHeight: 1.45, whiteSpace: 'pre-wrap' }}>
-                        {m.text || m.message_body || m.message_text || ''}
-                      </div>
+                      {/* Attached Media Display (Video or Image) */}
+                      {hasMedia && isVideo && (
+                        <div style={{ marginBottom: msgText ? '8px' : '4px', borderRadius: '8px', overflow: 'hidden', background: '#000000' }}>
+                          <video
+                            controls
+                            playsInline
+                            preload="metadata"
+                            src={m.media_url}
+                            style={{
+                              maxWidth: '100%',
+                              maxHeight: '320px',
+                              display: 'block',
+                              borderRadius: '8px'
+                            }}
+                          />
+                        </div>
+                      )}
+
+                      {hasMedia && isImage && (
+                        <div style={{ marginBottom: msgText ? '8px' : '4px', borderRadius: '8px', overflow: 'hidden' }}>
+                          <a href={m.media_url} target="_blank" rel="noopener noreferrer" title="Click to view full image">
+                            <img
+                              src={m.media_url}
+                              alt="Attached image"
+                              style={{
+                                maxWidth: '100%',
+                                maxHeight: '320px',
+                                objectFit: 'contain',
+                                display: 'block',
+                                borderRadius: '8px',
+                                cursor: 'pointer'
+                              }}
+                              loading="lazy"
+                            />
+                          </a>
+                        </div>
+                      )}
+
+                      {/* Preserved Formatted Text with Linebreaks and Spaces */}
+                      {msgText && (
+                        <div style={{ 
+                          fontSize: '0.875rem', 
+                          lineHeight: 1.5, 
+                          whiteSpace: 'pre-wrap', 
+                          wordBreak: 'break-word' 
+                        }}>
+                          {msgText}
+                        </div>
+                      )}
 
                       <div style={{
                         display: 'flex',
@@ -557,6 +696,118 @@ export default function InboxPage() {
                 <div ref={messagesEndRef} />
               </div>
 
+              {/* Media Attachment Preview Bar */}
+              {selectedMediaFile && (
+                <div style={{
+                  padding: '10px 16px',
+                  background: '#F1F5F9',
+                  borderTop: '1px solid var(--border-color)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: '12px'
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
+                    {mediaType === 'video' ? (
+                      <div style={{
+                        position: 'relative',
+                        width: '52px',
+                        height: '52px',
+                        borderRadius: '8px',
+                        background: '#0F172A',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        overflow: 'hidden',
+                        flexShrink: 0
+                      }}>
+                        {mediaPreviewUrl ? (
+                          <video src={mediaPreviewUrl} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                        ) : (
+                          <FileVideo size={24} color="#94A3B8" />
+                        )}
+                        <div style={{
+                          position: 'absolute',
+                          background: 'rgba(0,0,0,0.6)',
+                          borderRadius: '50%',
+                          padding: '4px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center'
+                        }}>
+                          <Play size={12} color="#FFFFFF" fill="#FFFFFF" />
+                        </div>
+                      </div>
+                    ) : (
+                      <div style={{
+                        width: '52px',
+                        height: '52px',
+                        borderRadius: '8px',
+                        border: '1px solid #CBD5E1',
+                        overflow: 'hidden',
+                        background: '#FFFFFF',
+                        flexShrink: 0
+                      }}>
+                        <img
+                          src={mediaPreviewUrl}
+                          alt="Preview"
+                          style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                        />
+                      </div>
+                    )}
+
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <span className="badge" style={{
+                          fontSize: '0.68rem',
+                          padding: '2px 6px',
+                          background: mediaType === 'video' ? '#EFF6FF' : '#F0FDF4',
+                          color: mediaType === 'video' ? '#1D4ED8' : '#15803D',
+                          border: `1px solid ${mediaType === 'video' ? '#BFDBFE' : '#BBF7D0'}`
+                        }}>
+                          {mediaType === 'video' ? 'Video Ready' : 'Image Ready'}
+                        </span>
+                        <span style={{ fontSize: '0.725rem', color: '#64748B' }}>
+                          {(selectedMediaFile.size / (1024 * 1024)).toFixed(2)} MB
+                        </span>
+                      </div>
+                      <div style={{
+                        fontSize: '0.8rem',
+                        fontWeight: 600,
+                        color: '#334155',
+                        marginTop: '2px',
+                        whiteSpace: 'nowrap',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis'
+                      }}>
+                        {selectedMediaFile.name}
+                      </div>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleClearMedia}
+                    style={{
+                      background: '#E2E8F0',
+                      border: 'none',
+                      borderRadius: '50%',
+                      width: '26px',
+                      height: '26px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      cursor: 'pointer',
+                      color: '#475569',
+                      flexShrink: 0
+                    }}
+                    title="Remove attachment"
+                  >
+                    <X size={15} />
+                  </button>
+                </div>
+              )}
+
               {/* Reply Input Form */}
               <form 
                 onSubmit={handleSendReply}
@@ -566,29 +817,95 @@ export default function InboxPage() {
                   display: 'flex',
                   gap: '10px',
                   background: '#FFFFFF',
-                  alignItems: 'center'
+                  alignItems: 'flex-end'
                 }}
               >
+                {/* Hidden File Picker */}
                 <input
-                  ref={inputRef}
-                  type="text"
-                  placeholder={`Reply directly to ${selectedConvo.name} on WhatsApp...`}
-                  className="saas-input"
-                  value={replyText}
-                  onChange={e => setReplyText(e.target.value)}
-                  onKeyDown={e => {
-                    if (e.key === 'Enter' && !e.shiftKey) {
-                      e.preventDefault();
-                      handleSendReply(e);
-                    }
-                  }}
-                  style={{ flex: 1, fontSize: '0.875rem' }}
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*,video/mp4,video/3gpp,video/quicktime,video/webm"
+                  style={{ display: 'none' }}
+                  onChange={handleFileSelect}
                 />
+
+                {/* Attach File Button */}
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  style={{
+                    background: selectedMediaFile ? '#DCFCE7' : '#F1F5F9',
+                    border: `1px solid ${selectedMediaFile ? '#86EFAC' : '#CBD5E1'}`,
+                    color: selectedMediaFile ? '#15803D' : '#475569',
+                    borderRadius: '8px',
+                    width: '42px',
+                    height: '42px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    cursor: 'pointer',
+                    flexShrink: 0,
+                    transition: 'all 0.15s ease'
+                  }}
+                  title="Attach Image or Video (JPG, PNG, MP4, 3GP, MOV)"
+                >
+                  <Paperclip size={18} />
+                </button>
+
+                {/* Multi-line Auto-Expanding Textarea with Shift+Enter Support */}
+                <div style={{ flex: 1, position: 'relative' }}>
+                  <textarea
+                    ref={textareaRef}
+                    rows={1}
+                    placeholder={
+                      selectedMediaFile 
+                        ? `Add caption for this ${mediaType}... (Enter to send, Shift+Enter for newline)`
+                        : `Type a reply to ${selectedConvo.name}... (Enter to send, Shift+Enter for newline)`
+                    }
+                    className="saas-input"
+                    value={replyText}
+                    onChange={e => {
+                      setReplyText(e.target.value);
+                      e.target.style.height = 'auto';
+                      e.target.style.height = `${Math.min(Math.max(e.target.scrollHeight, 42), 140)}px`;
+                    }}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        handleSendReply(e);
+                      }
+                    }}
+                    style={{
+                      width: '100%',
+                      minHeight: '42px',
+                      maxHeight: '140px',
+                      resize: 'none',
+                      fontSize: '0.875rem',
+                      lineHeight: '1.45',
+                      padding: '10px 12px',
+                      overflowY: 'auto',
+                      whiteSpace: 'pre-wrap',
+                      wordBreak: 'break-word',
+                      display: 'block',
+                      boxSizing: 'border-box'
+                    }}
+                  />
+                </div>
+
+                {/* Send Button */}
                 <button
                   type="submit"
-                  disabled={sendingReply || !replyText.trim()}
+                  disabled={sendingReply || (!replyText.trim() && !selectedMediaFile)}
                   className="btn btn-action-green"
-                  style={{ gap: '6px', padding: '10px 18px', flexShrink: 0 }}
+                  style={{
+                    gap: '6px',
+                    padding: '10px 18px',
+                    height: '42px',
+                    flexShrink: 0,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center'
+                  }}
                 >
                   <Send size={15} />
                   <span>{sendingReply ? 'Sending...' : 'Send'}</span>

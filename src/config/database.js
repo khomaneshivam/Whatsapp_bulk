@@ -91,6 +91,13 @@ function initializeDatabase() {
       campaign_id TEXT,
       is_read INTEGER DEFAULT 0,
       received_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      reply_text TEXT,
+      reply_sent_at DATETIME,
+      reply_status TEXT,
+      user_id TEXT,
+      media_url TEXT,
+      media_type TEXT,
+      media_caption TEXT,
       FOREIGN KEY (campaign_id) REFERENCES campaigns(id) ON DELETE SET NULL
     );
 
@@ -200,6 +207,15 @@ function initializeDatabase() {
     }
     if (!cols.includes("user_id")) {
       db.exec("ALTER TABLE customer_replies ADD COLUMN user_id TEXT;");
+    }
+    if (!cols.includes("media_url")) {
+      db.exec("ALTER TABLE customer_replies ADD COLUMN media_url TEXT;");
+    }
+    if (!cols.includes("media_type")) {
+      db.exec("ALTER TABLE customer_replies ADD COLUMN media_type TEXT;");
+    }
+    if (!cols.includes("media_caption")) {
+      db.exec("ALTER TABLE customer_replies ADD COLUMN media_caption TEXT;");
     }
     db.exec("CREATE INDEX IF NOT EXISTS idx_customer_replies_user ON customer_replies(user_id);");
   } catch (migErr2) {

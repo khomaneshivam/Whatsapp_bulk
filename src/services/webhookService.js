@@ -244,12 +244,28 @@ class WebhookService {
       }
     }
 
+    // Extract media metadata if incoming message is image or video
+    let incomingMediaUrl = null;
+    let incomingMediaType = null;
+    let incomingMediaCaption = null;
+    if (msgType === "image") {
+      incomingMediaType = "image";
+      incomingMediaCaption = msg.image?.caption || null;
+    } else if (msgType === "video") {
+      incomingMediaType = "video";
+      incomingMediaCaption = msg.video?.caption || null;
+    } else if (msgType === "document") {
+      incomingMediaType = "document";
+      incomingMediaCaption = msg.document?.filename || null;
+    }
+
     const insertStmt = db.prepare(`
       INSERT INTO customer_replies (
         wa_message_id, from_phone, customer_name, message_type,
         message_body, raw_payload, context_message_id, campaign_id,
+        media_url, media_type, media_caption,
         is_read, received_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
     `);
 
     const runResult = insertStmt.run(
@@ -261,6 +277,9 @@ class WebhookService {
       JSON.stringify(msg),
       contextMsgId,
       matchedCampaignId,
+      incomingMediaUrl,
+      incomingMediaType,
+      incomingMediaCaption,
       receivedAt
     );
 
@@ -396,6 +415,9 @@ class WebhookService {
         r.reply_text,
         r.reply_sent_at,
         r.reply_status,
+        r.media_url,
+        r.media_type,
+        r.media_caption,
         c.name as campaign_name
       FROM customer_replies r
       LEFT JOIN campaigns c ON r.campaign_id = c.id

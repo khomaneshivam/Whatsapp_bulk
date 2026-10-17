@@ -495,6 +495,67 @@ async function uploadMedia({ fileBuffer, fileName, mimeType, customCredentials =
   };
 }
 
+/**
+ * Send an image, video, or document directly to a customer via Meta Cloud API
+ */
+async function sendMediaMessage({ to, type = "image", mediaId, mediaUrl, caption = "", filename, customCredentials = null }) {
+  const creds = customCredentials || getActiveCredentials();
+  const defaultCountry = getSetting("DEFAULT_COUNTRY_CODE") || "91";
+  const cleanTo = cleanPhone(to, defaultCountry);
+
+  if (!cleanTo || cleanTo.length < 10) {
+    throw new Error(`Invalid recipient phone number: '${to}'`);
+  }
+
+  const mediaType = (type || "image").toLowerCase(); // "image" | "video" | "document" | "audio"
+  const mediaObject = {};
+  if (mediaId) {
+    mediaObject.id = mediaId;
+  } else if (mediaUrl) {
+    mediaObject.link = mediaUrl;
+  } else {
+    throw new Error("Either mediaId or mediaUrl is required to send media.");
+  }
+
+  if (caption && String(caption).trim() && (mediaType === "image" || mediaType === "video" || mediaType === "document")) {
+    mediaObject.caption = String(caption).trim();
+  }
+  if (filename && mediaType === "document") {
+    mediaObject.filename = filename;
+  }
+
+  const url = `${META_BASE_URL}/${creds.phoneNumberId}/messages`;
+  const payload = {
+    messaging_product: "whatsapp",
+    recipient_type: "individual",
+    to: cleanTo,
+    type: mediaType,
+    [mediaType]: mediaObject
+  };
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${creds.token}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(payload)
+  });
+
+  const data = await res.json();
+  if (!res.ok) {
+    throw parseMetaError(data, res.status);
+  }
+
+  return {
+    success: true,
+    messageId: data.messages?.[0]?.id,
+    recipient: cleanTo,
+    type: mediaType,
+    data
+  };
+}
+
 module.exports = {
   getActiveCredentials,
   testConnection,
@@ -502,6 +563,8 @@ module.exports = {
   getTemplateDetails,
   sendTemplateMessage,
   sendTextMessage,
+  sendMediaMessage,
   uploadMedia
 };
+
 
