@@ -307,31 +307,6 @@ function generateCampaignReportExcel(campaign, recipients) {
   /**
    * Summary sheet
    */
-  const summaryData = [
-    {
-      Property: "Campaign Name",
-      Value: campaign.name
-    },
-    {
-      Property: "Campaign ID",
-      Value: campaign.id
-    },
-    {
-      Property: "File Name",
-      Value: campaign.file_name || "N/A"
-    },
-    {
-      Property: "Status",
-      Value: campaign.status
-    },
-    {
-      Property: "Message Type",
-      Value: campaign.message_type
-    },
-    {
-      Property: "Template Name",
-      Value: campaign.template_name || "N/A"
-    },
   const totalSent = campaign.sent_count || 0;
   const totalFailed = campaign.failed_count || 0;
   const deliveredRecips = recipients.filter(r => r.status === "DELIVERED" || r.status === "READ").length;
