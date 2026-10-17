@@ -332,63 +332,70 @@ function generateCampaignReportExcel(campaign, recipients) {
       Property: "Template Name",
       Value: campaign.template_name || "N/A"
     },
-    {
-      Property: "Total Contacts",
-      Value: campaign.total_contacts
-    },
-    {
-      Property: "Successfully Sent",
-      Value: campaign.sent_count
-    },
-    {
-      Property: "Failed",
-      Value: campaign.failed_count
-    },
-    {
-      Property: "Created At",
-      Value: campaign.created_at
-    },
-    {
-      Property: "Scheduled At",
-      Value: campaign.scheduled_at || "Not Scheduled (Immediate)"
-    },
-    {
-      Property: "Completed At",
-      Value: campaign.completed_at || (campaign.status === "SCHEDULED" ? "Pending Schedule" : "In Progress")
-    }
+  const totalSent = campaign.sent_count || 0;
+  const totalFailed = campaign.failed_count || 0;
+  const deliveredRecips = recipients.filter(r => r.status === "DELIVERED" || r.status === "READ").length;
+  const readRecips = recipients.filter(r => r.status === "READ").length;
+  const deliveryRate = totalSent > 0 ? ((deliveredRecips / totalSent) * 100).toFixed(1) + "%" : "0.0%";
+  const readRate = deliveredRecips > 0 ? ((readRecips / deliveredRecips) * 100).toFixed(1) + "%" : "0.0%";
+
+  const summaryData = [
+    { Property: "Campaign Name", Value: campaign.name },
+    { Property: "Template Name", Value: campaign.template_name || "Direct Message" },
+    { Property: "Campaign Status", Value: campaign.status },
+    { Property: "Total Contacts", Value: campaign.total_contacts || recipients.length },
+    { Property: "Successfully Dispatched (Sent)", Value: totalSent },
+    { Property: "Delivered Count", Value: deliveredRecips },
+    { Property: "Delivery Rate (%)", Value: deliveryRate },
+    { Property: "Read / Opened Count", Value: readRecips },
+    { Property: "Read Rate (%)", Value: readRate },
+    { Property: "Failed Count", Value: totalFailed },
+    { Property: "Dispatch Throttle (ms)", Value: `${campaign.delay_ms || 250} ms` },
+    { Property: "Created At", Value: campaign.created_at || "" },
+    { Property: "Scheduled At", Value: campaign.scheduled_at || "Immediate" },
+    { Property: "Completed At", Value: campaign.completed_at || (campaign.status === "COMPLETED" ? "Finished" : "Active / In Progress") }
   ];
 
   const summarySheet = XLSX.utils.json_to_sheet(summaryData);
-
-  XLSX.utils.book_append_sheet(
-    wb,
-    summarySheet,
-    "Summary"
-  );
+  XLSX.utils.book_append_sheet(wb, summarySheet, "Summary Metrics");
 
   /**
-   * Detailed recipients sheet
+   * Detailed recipients sheet with timestamps and audit trail
    */
-  const detailsData = recipients.map((r, idx) => ({
-    "#": idx + 1,
-    "Recipient Name": r.contact_name || "",
-    "Original Phone": r.phone_number || "",
-    "Clean WhatsApp Number": r.clean_phone || "",
-    "Delivery Status": r.status || "",
-    "Meta Message ID": r.meta_message_id || "",
-    "Error / Note": r.error_message || "",
-    "Sent At": r.sent_at || ""
-  }));
+  const sanitize = (val) => {
+    if (val === null || val === undefined) return "";
+    const str = String(val);
+    return /^[=+\-@\t\r]/.test(str) ? `'${str}` : str;
+  };
 
-  const detailsSheet = XLSX.utils.json_to_sheet(
-    detailsData
-  );
+  const detailsData = recipients.map((r, idx) => {
+    let latencySec = "";
+    if (r.sent_at && r.delivered_at) {
+      const diffMs = new Date(r.delivered_at).getTime() - new Date(r.sent_at).getTime();
+      if (!isNaN(diffMs) && diffMs >= 0) {
+        latencySec = (diffMs / 1000).toFixed(1) + "s";
+      }
+    }
 
-  XLSX.utils.book_append_sheet(
-    wb,
-    detailsSheet,
-    "Recipients"
-  );
+    return {
+      "#": idx + 1,
+      "Recipient Name": sanitize(r.contact_name || ""),
+      "Original Phone": sanitize(r.phone_number || ""),
+      "Clean WhatsApp Number": sanitize(r.clean_phone || ""),
+      "Delivery Status": sanitize(r.status || ""),
+      "Meta Message ID": sanitize(r.meta_message_id || ""),
+      "Error Code": sanitize(r.error_code || ""),
+      "Error / Reason": sanitize(r.error_message || ""),
+      "Dispatched At (Sent)": sanitize(r.sent_at || ""),
+      "Delivered At": sanitize(r.delivered_at || ""),
+      "Read At": sanitize(r.read_at || ""),
+      "Failed At": sanitize(r.failed_at || ""),
+      "Delivery Turnaround Latency": latencySec
+    };
+  });
+
+  const detailsSheet = XLSX.utils.json_to_sheet(detailsData);
+  XLSX.utils.book_append_sheet(wb, detailsSheet, "Recipients Audit");
 
   return XLSX.write(wb, {
     type: "buffer",

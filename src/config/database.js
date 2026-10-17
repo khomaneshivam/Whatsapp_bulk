@@ -13,9 +13,12 @@ if (!fs.existsSync(config.DATA_DIR)) {
 const dbPath = path.join(config.DATA_DIR, "whatsapp_bulk.db");
 const db = new DatabaseSync(dbPath);
 
-// Enable WAL mode for better concurrency and performance
+// Enable WAL mode and tune SQLite performance for high-throughput production (2000+ msgs)
 db.exec("PRAGMA journal_mode = WAL;");
 db.exec("PRAGMA synchronous = NORMAL;");
+db.exec("PRAGMA busy_timeout = 5000;");
+db.exec("PRAGMA cache_size = -64000;"); // 64MB memory page cache
+db.exec("PRAGMA temp_store = MEMORY;");
 
 // Initialize tables
 function initializeDatabase() {
@@ -235,6 +238,45 @@ function initializeDatabase() {
     db.exec("CREATE INDEX IF NOT EXISTS idx_campaigns_user ON campaigns(user_id);");
   } catch (migErr3) {
     console.warn("[DB Migration] campaigns user columns check:", migErr3.message);
+  }
+
+  // Migrate campaign_recipients: add delivery tracking timestamps and error_code if not present
+  try {
+    const recipTableInfo = db.prepare("PRAGMA table_info(campaign_recipients)").all();
+    const recipCols = recipTableInfo.map(c => c.name);
+    if (!recipCols.includes("delivered_at")) {
+      db.exec("ALTER TABLE campaign_recipients ADD COLUMN delivered_at DATETIME;");
+    }
+    if (!recipCols.includes("read_at")) {
+      db.exec("ALTER TABLE campaign_recipients ADD COLUMN read_at DATETIME;");
+    }
+    if (!recipCols.includes("failed_at")) {
+      db.exec("ALTER TABLE campaign_recipients ADD COLUMN failed_at DATETIME;");
+    }
+    if (!recipCols.includes("error_code")) {
+      db.exec("ALTER TABLE campaign_recipients ADD COLUMN error_code TEXT;");
+    }
+    db.exec("CREATE INDEX IF NOT EXISTS idx_recipients_meta_msg_id ON campaign_recipients(meta_message_id);");
+    db.exec("CREATE INDEX IF NOT EXISTS idx_recipients_pending_batch ON campaign_recipients(campaign_id, status, id);");
+    db.exec("CREATE INDEX IF NOT EXISTS idx_recipients_clean_phone ON campaign_recipients(clean_phone);");
+  } catch (migErrRecip) {
+    console.warn("[DB Migration] campaign_recipients delivery columns check:", migErrRecip.message);
+  }
+
+  // Migrate campaigns: add delivered_count and read_count columns if not present
+  try {
+    const campTableInfo = db.prepare("PRAGMA table_info(campaigns)").all();
+    const campCols = campTableInfo.map(c => c.name);
+    if (!campCols.includes("delivered_count")) {
+      db.exec("ALTER TABLE campaigns ADD COLUMN delivered_count INTEGER DEFAULT 0;");
+    }
+    if (!campCols.includes("read_count")) {
+      db.exec("ALTER TABLE campaigns ADD COLUMN read_count INTEGER DEFAULT 0;");
+    }
+    db.exec("CREATE INDEX IF NOT EXISTS idx_replies_context_msg ON customer_replies(context_message_id);");
+    db.exec("CREATE INDEX IF NOT EXISTS idx_replies_camp_from ON customer_replies(campaign_id, from_phone);");
+  } catch (migErrCampCols) {
+    console.warn("[DB Migration] campaigns delivered/read columns check:", migErrCampCols.message);
   }
 
   // Migrate automated_booking_dispatches: add user_id column if not present

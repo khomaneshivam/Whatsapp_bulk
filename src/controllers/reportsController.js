@@ -53,8 +53,12 @@ async function getCampaignReports(req, res) {
         r.phone_number, r.clean_phone,
         r.status, r.status as delivery_status,
         r.meta_message_id,
+        r.error_code,
         r.error_message, r.error_message as error_reason,
         r.sent_at, r.sent_at as dispatched_at,
+        r.delivered_at,
+        r.read_at,
+        r.failed_at,
         c.template_name
       FROM campaign_recipients r
       LEFT JOIN campaigns c ON r.campaign_id = c.id
@@ -82,6 +86,18 @@ async function getCampaignReports(req, res) {
 }
 
 /**
+ * Sanitizes cell values to prevent CSV / Excel formula injection vulnerabilities (OWASP compliance)
+ */
+function sanitizeCell(val) {
+  if (val === null || val === undefined) return "";
+  const str = String(val);
+  if (/^[=+\-@\t\r]/.test(str)) {
+    return `'${str}`;
+  }
+  return str;
+}
+
+/**
  * Export campaign delivery logs as Excel or CSV file
  */
 async function exportCampaignReport(req, res) {
@@ -92,7 +108,7 @@ async function exportCampaignReport(req, res) {
     const conditions = [];
     const params = [];
 
-    if (campaignId) {
+    if (campaignId && campaignId !== "ALL") {
       conditions.push("r.campaign_id = ?");
       params.push(campaignId);
     }
@@ -104,7 +120,7 @@ async function exportCampaignReport(req, res) {
 
     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
 
-    const rows = db.prepare(`
+    const rawRows = db.prepare(`
       SELECT 
         r.id as "ID",
         c.name as "Campaign Name",
@@ -113,28 +129,41 @@ async function exportCampaignReport(req, res) {
         r.clean_phone as "Phone Number",
         r.status as "Delivery Status",
         r.meta_message_id as "Meta Message ID",
+        r.error_code as "Error Code",
         r.error_message as "Error Reason",
-        r.sent_at as "Dispatched At"
+        r.sent_at as "Dispatched At",
+        r.delivered_at as "Delivered At",
+        r.read_at as "Read At",
+        r.failed_at as "Failed At"
       FROM campaign_recipients r
       LEFT JOIN campaigns c ON r.campaign_id = c.id
       ${whereClause}
       ORDER BY r.sent_at DESC
     `).all(...params);
 
-    if (rows.length === 0) {
+    if (rawRows.length === 0) {
       return res.status(404).json({ success: false, message: "No recipient records found to export." });
     }
 
+    // Apply security sanitization to all exported values
+    const rows = rawRows.map(row => {
+      const sanitized = {};
+      for (const [key, value] of Object.entries(row)) {
+        sanitized[key] = sanitizeCell(value);
+      }
+      return sanitized;
+    });
+
     const worksheet = XLSX.utils.json_to_sheet(rows);
     const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, "Delivery Report");
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Delivery Audit");
 
     const filename = `whatsapp_broadcast_report_${campaignId || "all"}_${Date.now()}.${format === "csv" ? "csv" : "xlsx"}`;
 
     if (format === "csv") {
       const csv = XLSX.utils.sheet_to_csv(worksheet);
       res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
-      res.setHeader("Content-Type", "text/csv");
+      res.setHeader("Content-Type", "text/csv; charset=utf-8");
       return res.send(csv);
     }
 
@@ -252,44 +281,69 @@ async function getOverviewAnalytics(req, res) {
     // Recipient delivery status breakdown (Delivered vs Read vs Failed)
     const recipientStats = db.prepare(`
       SELECT 
-        SUM(CASE WHEN r.status = 'DELIVERED' THEN 1 ELSE 0 END) as count_delivered,
+        SUM(CASE WHEN r.status = 'DELIVERED' THEN 1 ELSE 0 END) as count_delivered_only,
         SUM(CASE WHEN r.status = 'READ' THEN 1 ELSE 0 END) as count_read,
+        SUM(CASE WHEN r.status IN ('DELIVERED', 'READ') THEN 1 ELSE 0 END) as count_delivered,
         SUM(CASE WHEN r.status = 'FAILED' THEN 1 ELSE 0 END) as count_failed,
-        SUM(CASE WHEN r.status = 'SENT' THEN 1 ELSE 0 END) as count_sent
+        SUM(CASE WHEN r.status = 'SENT' THEN 1 ELSE 0 END) as count_sent,
+        SUM(CASE WHEN r.status = 'PENDING' THEN 1 ELSE 0 END) as count_pending
       FROM campaign_recipients r
       LEFT JOIN campaigns c ON r.campaign_id = c.id
       ${userClause ? "WHERE c.user_id = ?" : ""}
     `).get(...userParams);
 
-    const totalSent = campStats.total_sent + (autoStats.sent_success || 0);
-    const totalFailed = (campStats.total_failed || 0) + (autoStats.sent_failed || 0) + (recipientStats.count_failed || 0);
-    const totalAttempted = totalSent + totalFailed;
-    const deliveryRate = totalAttempted > 0 ? ((totalSent / totalAttempted) * 100).toFixed(1) : "100.0";
+    // Customer direct reply counts (connected to campaigns)
+    const replyStats = db.prepare(`
+      SELECT 
+        COUNT(*) as total_replies,
+        COUNT(DISTINCT from_phone) as unique_repliers
+      FROM customer_replies cr
+      ${userClause ? "WHERE cr.user_id = ?" : ""}
+    `).get(...userParams);
 
-    const totalDelivered = recipientStats.count_delivered || totalSent;
+    const totalSent = (campStats.total_sent || 0) + (autoStats.sent_success || 0);
+    const totalFailed = (campStats.total_failed || 0) + (autoStats.sent_failed || 0);
+    const totalAttempted = totalSent + totalFailed;
+
+    const totalDelivered = (recipientStats.count_delivered > 0) ? recipientStats.count_delivered : totalSent;
     const totalRead = recipientStats.count_read || 0;
+    const totalReplies = replyStats.total_replies || 0;
+
+    const deliveryRate = totalSent > 0 ? ((totalDelivered / totalSent) * 100).toFixed(1) : (totalSent > 0 ? "100.0" : "0.0");
+    const readRate = totalDelivered > 0 ? ((totalRead / totalDelivered) * 100).toFixed(1) : "0.0";
+    const failureRate = totalAttempted > 0 ? ((totalFailed / totalAttempted) * 100).toFixed(1) : "0.0";
+    const replyRate = totalDelivered > 0 ? (((replyStats.unique_repliers || 0) / totalDelivered) * 100).toFixed(1) : "0.0";
 
     return res.status(200).json({
       success: true,
       data: {
-        // Top-level convenience properties for UI consumption
+        // Top-level telemetry for UI metrics cards
         totalBroadcasts: campStats.total_campaigns || 0,
         totalRecipients: campStats.total_contacts || 0,
         totalDelivered: totalDelivered,
         totalRead: totalRead,
         totalFailed: totalFailed,
         totalSent: totalSent,
+        totalReplies: totalReplies,
         deliveryRate: `${deliveryRate}%`,
+        readRate: `${readRate}%`,
+        replyRate: `${replyRate}%`,
+        failureRate: `${failureRate}%`,
         activeScheduled: scheduledStats.count || 0,
         totalDispatches: autoStats.total_dispatches || 0,
 
         // Deep structured telemetry
         campaigns: campStats,
         automation: autoStats,
+        recipients: recipientStats,
         overall: {
           totalSent,
+          totalDelivered,
+          totalRead,
           totalFailed,
-          deliveryRate: parseFloat(deliveryRate)
+          deliveryRate: parseFloat(deliveryRate),
+          readRate: parseFloat(readRate),
+          replyRate: parseFloat(replyRate)
         }
       }
     });

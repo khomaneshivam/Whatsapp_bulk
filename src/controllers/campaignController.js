@@ -9,6 +9,8 @@ async function listCampaigns(req, res) {
     const campaigns = db.prepare(`
       SELECT 
         c.*,
+        (SELECT COUNT(*) FROM campaign_recipients WHERE campaign_id = c.id AND (status = 'DELIVERED' OR status = 'READ')) as current_delivered,
+        (SELECT COUNT(*) FROM campaign_recipients WHERE campaign_id = c.id AND status = 'READ') as current_read,
         (SELECT COUNT(*) FROM campaign_recipients WHERE campaign_id = c.id AND status = 'SENT') as current_sent,
         (SELECT COUNT(*) FROM campaign_recipients WHERE campaign_id = c.id AND status = 'FAILED') as current_failed,
         (SELECT COUNT(*) FROM campaign_recipients WHERE campaign_id = c.id AND status = 'PENDING') as current_pending
@@ -27,29 +29,92 @@ async function listCampaigns(req, res) {
 }
 
 /**
- * Get detailed campaign info and list of recipients
+ * Get detailed campaign info and list of recipients with optional pagination and search
  */
 async function getCampaignDetails(req, res) {
   try {
     const { campaignId } = req.params;
+    const { page, limit, status, search } = req.query;
     const campaign = db.prepare("SELECT * FROM campaigns WHERE id = ?").get(campaignId);
 
     if (!campaign) {
       return res.status(404).json({ success: false, message: "Campaign not found." });
     }
 
-    const recipients = db.prepare(`
-      SELECT id, campaign_id, phone_number, clean_phone, contact_name, status, meta_message_id, error_message, sent_at
-      FROM campaign_recipients
+    // High performance indexed status breakdown
+    const statusCounts = db.prepare(`
+      SELECT 
+        COUNT(*) as total,
+        SUM(CASE WHEN status = 'SENT' THEN 1 ELSE 0 END) as sent,
+        SUM(CASE WHEN status IN ('DELIVERED', 'READ') THEN 1 ELSE 0 END) as delivered,
+        SUM(CASE WHEN status = 'READ' THEN 1 ELSE 0 END) as read,
+        SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END) as failed,
+        SUM(CASE WHEN status = 'PENDING' THEN 1 ELSE 0 END) as pending
+      FROM campaign_recipients 
       WHERE campaign_id = ?
-      ORDER BY id ASC
-    `).all(campaignId);
+    `).get(campaignId);
+
+    const conditions = ["campaign_id = ?"];
+    const params = [campaignId];
+
+    if (status && status !== "ALL") {
+      conditions.push("status = ?");
+      params.push(status);
+    }
+    if (search && search.trim()) {
+      conditions.push("(contact_name LIKE ? OR phone_number LIKE ? OR clean_phone LIKE ?)");
+      const s = `%${search.trim()}%`;
+      params.push(s, s, s);
+    }
+
+    const whereClause = `WHERE ${conditions.join(" AND ")}`;
+    let recipients;
+    let pagination = null;
+
+    if (page || limit) {
+      const parsedLimit = Math.min(Math.max(parseInt(limit, 10) || 50, 1), 500);
+      const parsedPage = Math.max(parseInt(page, 10) || 1, 1);
+      const offset = (parsedPage - 1) * parsedLimit;
+
+      const totalFiltered = db.prepare(`SELECT COUNT(*) as c FROM campaign_recipients ${whereClause}`).get(...params).c;
+
+      recipients = db.prepare(`
+        SELECT id, campaign_id, phone_number, clean_phone, contact_name, status, meta_message_id, error_code, error_message, sent_at, delivered_at, read_at, failed_at
+        FROM campaign_recipients
+        ${whereClause}
+        ORDER BY id ASC
+        LIMIT ? OFFSET ?
+      `).all(...params, parsedLimit, offset);
+
+      pagination = {
+        total: totalFiltered,
+        page: parsedPage,
+        limit: parsedLimit,
+        totalPages: Math.ceil(totalFiltered / parsedLimit)
+      };
+    } else {
+      recipients = db.prepare(`
+        SELECT id, campaign_id, phone_number, clean_phone, contact_name, status, meta_message_id, error_code, error_message, sent_at, delivered_at, read_at, failed_at
+        FROM campaign_recipients
+        ${whereClause}
+        ORDER BY id ASC
+      `).all(...params);
+    }
 
     return res.status(200).json({
       success: true,
       data: {
         campaign,
-        recipients
+        metrics: {
+          total: statusCounts.total || campaign.total_contacts || 0,
+          sent: statusCounts.sent || campaign.sent_count || 0,
+          delivered: statusCounts.delivered || 0,
+          read: statusCounts.read || 0,
+          failed: statusCounts.failed || campaign.failed_count || 0,
+          pending: statusCounts.pending || 0
+        },
+        recipients,
+        pagination
       }
     });
   } catch (error) {

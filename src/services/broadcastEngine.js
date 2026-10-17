@@ -390,7 +390,7 @@ class BroadcastEngine extends EventEmitter {
 
     const updateRecipientFail = db.prepare(`
       UPDATE campaign_recipients 
-      SET status = 'FAILED', error_message = ?, rendered_message = ?, sent_at = CURRENT_TIMESTAMP 
+      SET status = 'FAILED', error_message = ?, error_code = ?, rendered_message = ?, failed_at = CURRENT_TIMESTAMP, sent_at = CURRENT_TIMESTAMP 
       WHERE id = ?
     `);
 
@@ -402,6 +402,12 @@ class BroadcastEngine extends EventEmitter {
       UPDATE campaigns SET failed_count = failed_count + 1 WHERE id = ?
     `);
 
+    const fetchPendingBatch = db.prepare(`
+      SELECT * FROM campaign_recipients 
+      WHERE campaign_id = ? AND status = 'PENDING' 
+      ORDER BY id ASC LIMIT 50
+    `);
+
     try {
       while (jobState.running) {
         if (jobState.cancelled) {
@@ -410,19 +416,16 @@ class BroadcastEngine extends EventEmitter {
           break;
         }
 
-        if (jobState.paused) {
+        while (jobState.paused && jobState.running && !jobState.cancelled) {
           await this.sleep(500);
-          continue;
         }
 
-        // Fetch next pending recipient
-        const recipient = db.prepare(`
-          SELECT * FROM campaign_recipients 
-          WHERE campaign_id = ? AND status = 'PENDING' 
-          ORDER BY id ASC LIMIT 1
-        `).get(campaignId);
+        if (jobState.cancelled || !jobState.running) break;
 
-        if (!recipient) {
+        // Fetch bounded batch of 50 pending recipients (O(1) memory, 98% reduced DB lock overhead)
+        const batch = fetchPendingBatch.all(campaignId);
+
+        if (!batch || batch.length === 0) {
           // All recipients processed!
           db.prepare("UPDATE campaigns SET status = 'COMPLETED', completed_at = CURRENT_TIMESTAMP WHERE id = ?").run(campaignId);
           const finalCamp = db.prepare("SELECT sent_count, failed_count, valid_contacts FROM campaigns WHERE id = ?").get(campaignId);
@@ -437,88 +440,98 @@ class BroadcastEngine extends EventEmitter {
           break;
         }
 
-        let rowData = {};
-        try {
-          rowData = recipient.raw_data ? JSON.parse(recipient.raw_data) : {};
-        } catch {
-          rowData = {};
-        }
+        for (const recipient of batch) {
+          if (jobState.cancelled || !jobState.running) break;
+          while (jobState.paused && jobState.running && !jobState.cancelled) {
+            await this.sleep(500);
+          }
+          if (jobState.cancelled || !jobState.running) break;
 
-        // Dispatch via Meta Cloud API
-        try {
-          let sendResult;
-          let renderedContent = "";
+          let rowData = {};
+          try {
+            rowData = recipient.raw_data ? JSON.parse(recipient.raw_data) : {};
+          } catch {
+            rowData = {};
+          }
 
-          if (campaign.message_type === "TEMPLATE") {
-            let tplName = (campaign.template_name || "kt_restaurant_invitation").trim();
-            let tplLang = campaign.template_language;
+          // Dispatch via Meta Cloud API
+          try {
+            let sendResult;
+            let renderedContent = "";
 
-            if (tplName === "1757343188867100" || tplName.toLowerCase().includes("restaurant")) {
-              tplName = "kt_restaurant_invitation";
-              tplLang = "en";
+            if (campaign.message_type === "TEMPLATE") {
+              let tplName = (campaign.template_name || "kt_restaurant_invitation").trim();
+              let tplLang = campaign.template_language;
+
+              if (tplName === "1757343188867100" || tplName.toLowerCase().includes("restaurant")) {
+                tplName = "kt_restaurant_invitation";
+                tplLang = "en";
+              }
+
+              const components = this.buildTemplateComponents(mappingConfig, rowData, tplName);
+              renderedContent = JSON.stringify(components);
+
+              sendResult = await sendTemplateMessage({
+                to: recipient.clean_phone,
+                templateName: tplName,
+                languageCode: tplLang || "en",
+                components: components
+              });
+            } else {
+              // Direct Text Message
+              renderedContent = this.interpolateText(campaign.message_body, rowData);
+
+              sendResult = await sendTextMessage({
+                to: recipient.clean_phone,
+                body: renderedContent
+              });
             }
 
-            const components = this.buildTemplateComponents(mappingConfig, rowData, tplName);
-            renderedContent = JSON.stringify(components);
+            // Mark recipient as SENT
+            updateRecipientSuccess.run(sendResult.messageId || null, renderedContent, recipient.id);
+            incrementSent.run(campaignId);
 
-            sendResult = await sendTemplateMessage({
-              to: recipient.clean_phone,
-              templateName: tplName,
-              languageCode: tplLang || "en",
-              components: components
+            const curStats = db.prepare("SELECT sent_count, failed_count, valid_contacts FROM campaigns WHERE id = ?").get(campaignId);
+            this.emit("broadcast:progress", {
+              campaignId,
+              recipientId: recipient.id,
+              phone: recipient.clean_phone,
+              name: recipient.contact_name,
+              status: "SENT",
+              messageId: sendResult.messageId,
+              sent: curStats?.sent_count || 1,
+              failed: curStats?.failed_count || 0,
+              total: curStats?.valid_contacts || campaign.valid_contacts,
+              lastRecipient: recipient.contact_name || recipient.clean_phone,
+              metaMessageId: sendResult.messageId
             });
-          } else {
-            // Direct Text Message
-            renderedContent = this.interpolateText(campaign.message_body, rowData);
+          } catch (err) {
+            const errCode = String(err.code || err.subcode || err.status || "");
+            console.warn(`[Broadcast] Message failed to ${recipient.clean_phone} (${errCode}):`, err.message);
+            updateRecipientFail.run(err.message || "Failed to send", errCode || null, "", recipient.id);
+            incrementFailed.run(campaignId);
 
-            sendResult = await sendTextMessage({
-              to: recipient.clean_phone,
-              body: renderedContent
+            const curStats = db.prepare("SELECT sent_count, failed_count, valid_contacts FROM campaigns WHERE id = ?").get(campaignId);
+            this.emit("broadcast:progress", {
+              campaignId,
+              recipientId: recipient.id,
+              phone: recipient.clean_phone,
+              name: recipient.contact_name,
+              status: "FAILED",
+              error: err.message,
+              errorCode: errCode,
+              sent: curStats?.sent_count || 0,
+              failed: curStats?.failed_count || 1,
+              total: curStats?.valid_contacts || campaign.valid_contacts,
+              lastRecipient: recipient.contact_name || recipient.clean_phone
             });
           }
 
-          // Mark recipient as SENT
-          updateRecipientSuccess.run(sendResult.messageId || null, renderedContent, recipient.id);
-          incrementSent.run(campaignId);
-
-          const curStats = db.prepare("SELECT sent_count, failed_count, valid_contacts FROM campaigns WHERE id = ?").get(campaignId);
-          this.emit("broadcast:progress", {
-            campaignId,
-            recipientId: recipient.id,
-            phone: recipient.clean_phone,
-            name: recipient.contact_name,
-            status: "SENT",
-            messageId: sendResult.messageId,
-            sent: curStats?.sent_count || 1,
-            failed: curStats?.failed_count || 0,
-            total: curStats?.valid_contacts || campaign.valid_contacts,
-            lastRecipient: recipient.contact_name || recipient.clean_phone,
-            metaMessageId: sendResult.messageId
-          });
-        } catch (err) {
-          console.warn(`[Broadcast] Message failed to ${recipient.clean_phone}:`, err.message);
-          updateRecipientFail.run(err.message || "Failed to send", "", recipient.id);
-          incrementFailed.run(campaignId);
-
-          const curStats = db.prepare("SELECT sent_count, failed_count, valid_contacts FROM campaigns WHERE id = ?").get(campaignId);
-          this.emit("broadcast:progress", {
-            campaignId,
-            recipientId: recipient.id,
-            phone: recipient.clean_phone,
-            name: recipient.contact_name,
-            status: "FAILED",
-            error: err.message,
-            sent: curStats?.sent_count || 0,
-            failed: curStats?.failed_count || 1,
-            total: curStats?.valid_contacts || campaign.valid_contacts,
-            lastRecipient: recipient.contact_name || recipient.clean_phone
-          });
-        }
-
-        // Throttle to respect Meta Cloud API rate limits
-        const currentDelay = (jobState && jobState.delayMs !== undefined) ? jobState.delayMs : (campaign.delay_ms || 250);
-        if (currentDelay > 0) {
-          await this.sleep(currentDelay);
+          // Throttle pacing to respect Meta Cloud API rate limits
+          const currentDelay = (jobState && jobState.delayMs !== undefined) ? jobState.delayMs : (campaign.delay_ms || 250);
+          if (currentDelay > 0) {
+            await this.sleep(currentDelay);
+          }
         }
       }
     } catch (err) {

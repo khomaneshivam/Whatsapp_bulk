@@ -17,7 +17,9 @@ import {
   StopCircle,
   Trash2,
   Calendar,
-  AlertTriangle
+  AlertTriangle,
+  CheckCheck,
+  MessageSquare
 } from 'lucide-react';
 
 export default function ReportsPage() {
@@ -273,7 +275,7 @@ export default function ReportsPage() {
 
       {/* KPI Cards Grid */}
       {overview && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px', marginBottom: '28px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px', marginBottom: '28px' }}>
           <div className="saas-card" style={{ padding: '20px' }}>
             <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: 600 }}>Total Broadcasts</div>
             <div style={{ fontSize: '1.85rem', fontWeight: 800, color: '#0F172A', marginTop: '6px' }}>
@@ -285,42 +287,72 @@ export default function ReportsPage() {
           </div>
 
           <div className="saas-card" style={{ padding: '20px' }}>
-            <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: 600 }}>Recipients Targeted</div>
+            <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: 600 }}>Targeted Audience</div>
             <div style={{ fontSize: '1.85rem', fontWeight: 800, color: '#2563EB', marginTop: '6px' }}>
               {(overview.totalRecipients || 0).toLocaleString()}
             </div>
             <div style={{ fontSize: '0.75rem', color: '#64748B', marginTop: '4px' }}>
-              Audience volume
+              {(overview.totalSent || 0).toLocaleString()} dispatched
             </div>
           </div>
 
           <div className="saas-card" style={{ padding: '20px' }}>
-            <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: 600 }}>Delivered Rate</div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: 600 }}>Delivered Rate</div>
+              <span className="badge" style={{ background: '#DCFCE7', color: '#15803D', border: '1px solid #BBF7D0', fontSize: '0.7rem' }}>
+                {overview.deliveryRate || '100%'}
+              </span>
+            </div>
             <div style={{ fontSize: '1.85rem', fontWeight: 800, color: '#15803D', marginTop: '6px' }}>
-              {overview.deliveryRate || '0%'}
+              {(overview.totalDelivered || 0).toLocaleString()}
             </div>
             <div style={{ fontSize: '0.75rem', color: '#15803D', marginTop: '4px' }}>
-              {(overview.totalDelivered || 0).toLocaleString()} handset delivered
+              Handset delivered verified
             </div>
           </div>
 
           <div className="saas-card" style={{ padding: '20px' }}>
-            <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: 600 }}>Read Receipts</div>
-            <div style={{ fontSize: '1.85rem', fontWeight: 800, color: '#D97706', marginTop: '6px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: 600 }}>Read Receipts</div>
+              <span className="badge" style={{ background: '#EFF6FF', color: '#1D4ED8', border: '1px solid #BFDBFE', fontSize: '0.7rem' }}>
+                {overview.readRate || '0%'}
+              </span>
+            </div>
+            <div style={{ fontSize: '1.85rem', fontWeight: 800, color: '#2563EB', marginTop: '6px' }}>
               {(overview.totalRead || 0).toLocaleString()}
             </div>
             <div style={{ fontSize: '0.75rem', color: '#64748B', marginTop: '4px' }}>
-              Blue double ticks verified
+              Blue double ticks read
             </div>
           </div>
 
           <div className="saas-card" style={{ padding: '20px' }}>
-            <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: 600 }}>Delivery Failures</div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: 600 }}>Customer Replies</div>
+              <span className="badge" style={{ background: '#F5F3FF', color: '#7C3AED', border: '1px solid #DDD6FE', fontSize: '0.7rem' }}>
+                {overview.replyRate || '0%'}
+              </span>
+            </div>
+            <div style={{ fontSize: '1.85rem', fontWeight: 800, color: '#7C3AED', marginTop: '6px' }}>
+              {(overview.totalReplies || 0).toLocaleString()}
+            </div>
+            <div style={{ fontSize: '0.75rem', color: '#64748B', marginTop: '4px' }}>
+              2-way inbox responses
+            </div>
+          </div>
+
+          <div className="saas-card" style={{ padding: '20px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: 600 }}>Delivery Failures</div>
+              <span className="badge" style={{ background: '#FEF2F2', color: '#DC2626', border: '1px solid #FECACA', fontSize: '0.7rem' }}>
+                {overview.failureRate || '0%'}
+              </span>
+            </div>
             <div style={{ fontSize: '1.85rem', fontWeight: 800, color: '#DC2626', marginTop: '6px' }}>
               {(overview.totalFailed || 0).toLocaleString()}
             </div>
             <div style={{ fontSize: '0.75rem', color: '#DC2626', marginTop: '4px' }}>
-              Invalid / Blocked
+              Invalid / Blocked numbers
             </div>
           </div>
         </div>
@@ -747,18 +779,19 @@ export default function ReportsPage() {
                 <tr>
                   <th>Recipient Name</th>
                   <th>Phone Number</th>
-                  <th>Campaign Name</th>
-                  <th>Template Name</th>
+                  <th>Campaign & Template</th>
                   <th>Delivery Status</th>
+                  <th>Delivered At</th>
+                  <th>Read At</th>
+                  <th>Dispatched At</th>
                   <th>Meta Message ID</th>
                   <th>Error Diagnostic</th>
-                  <th>Dispatched At</th>
                 </tr>
               </thead>
               <tbody>
                 {filteredCampaignReports.length === 0 ? (
                   <tr>
-                    <td colSpan="8" style={{ textAlign: 'center', padding: '36px', color: '#94A3B8' }}>
+                    <td colSpan="9" style={{ textAlign: 'center', padding: '36px', color: '#94A3B8' }}>
                       No recipient delivery logs matching current filter.
                     </td>
                   </tr>
@@ -766,11 +799,9 @@ export default function ReportsPage() {
                   filteredCampaignReports.map((item, idx) => {
                     const recipientName = item.contact_name || item.recipient_name || 'Guest';
                     const rawStatus = (item.status || item.delivery_status || 'SENT').toUpperCase();
-                    const statusClass = 
-                      rawStatus === 'READ' ? 'badge-info' :
-                      rawStatus === 'DELIVERED' ? 'badge-success' :
-                      rawStatus === 'SENT' ? 'badge-warning' : 'badge-danger';
                     const sentTime = item.sent_at || item.dispatched_at;
+                    const deliveredTime = item.delivered_at;
+                    const readTime = item.read_at;
 
                     return (
                       <tr key={item.id || idx}>
@@ -778,29 +809,66 @@ export default function ReportsPage() {
                           {recipientName}
                         </td>
                         <td style={{ fontFamily: 'var(--font-mono)', fontSize: '0.825rem' }}>
-                          {item.clean_phone || item.phone_number}
+                          +{item.clean_phone || item.phone_number}
                         </td>
                         <td>
-                          <span style={{ color: '#475569', fontWeight: 500 }}>{item.campaign_name || 'Campaign'}</span>
-                        </td>
-                        <td>
-                          <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', background: '#F1F5F9', padding: '2px 6px', borderRadius: '4px' }}>
-                            {item.template_name}
+                          <div style={{ color: '#0F172A', fontWeight: 600, fontSize: '0.825rem' }}>
+                            {item.campaign_name || 'Campaign'}
+                          </div>
+                          <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.72rem', background: '#F1F5F9', padding: '1px 6px', borderRadius: '4px', color: '#64748B' }}>
+                            {item.template_name || 'Template'}
                           </span>
                         </td>
                         <td>
-                          <span className={`badge ${statusClass}`}>
-                            {rawStatus}
-                          </span>
+                          {rawStatus === 'READ' ? (
+                            <span className="badge" style={{ background: '#EFF6FF', color: '#1D4ED8', border: '1px solid #BFDBFE', display: 'inline-flex', alignItems: 'center', gap: '4px', fontWeight: 700 }}>
+                              <CheckCheck size={13} color="#2563EB" /> READ
+                            </span>
+                          ) : rawStatus === 'DELIVERED' ? (
+                            <span className="badge" style={{ background: '#F0FDF4', color: '#15803D', border: '1px solid #BBF7D0', display: 'inline-flex', alignItems: 'center', gap: '4px', fontWeight: 700 }}>
+                              <CheckCheck size={13} color="#15803D" /> DELIVERED
+                            </span>
+                          ) : rawStatus === 'SENT' ? (
+                            <span className="badge badge-warning" style={{ fontWeight: 700 }}>
+                              DISPATCHED
+                            </span>
+                          ) : rawStatus === 'PENDING' ? (
+                            <span className="badge" style={{ background: '#F1F5F9', color: '#64748B', border: '1px solid #E2E8F0', fontWeight: 700 }}>
+                              PENDING
+                            </span>
+                          ) : (
+                            <span className="badge badge-danger" style={{ fontWeight: 700 }}>
+                              ✕ FAILED
+                            </span>
+                          )}
                         </td>
-                        <td style={{ fontFamily: 'var(--font-mono)', fontSize: '0.72rem', color: '#64748B' }}>
-                          {item.meta_message_id || 'N/A'}
+                        <td style={{ fontSize: '0.75rem', color: deliveredTime ? '#15803D' : '#94A3B8', fontWeight: deliveredTime ? 600 : 400 }}>
+                          {deliveredTime ? new Date(deliveredTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—'}
                         </td>
-                        <td style={{ color: item.error_message ? '#DC2626' : '#94A3B8', fontSize: '0.75rem', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item.error_message || item.error_reason || ''}>
-                          {item.error_message || item.error_reason || '—'}
+                        <td style={{ fontSize: '0.75rem', color: readTime ? '#2563EB' : '#94A3B8', fontWeight: readTime ? 700 : 400 }}>
+                          {readTime ? new Date(readTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—'}
                         </td>
                         <td style={{ fontSize: '0.75rem', color: '#64748B' }}>
-                          {sentTime ? new Date(sentTime).toLocaleString() : 'N/A'}
+                          {sentTime ? new Date(sentTime).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'N/A'}
+                        </td>
+                        <td style={{ fontFamily: 'var(--font-mono)', fontSize: '0.7rem', color: '#64748B', maxWidth: '140px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item.meta_message_id || ''}>
+                          {item.meta_message_id || '—'}
+                        </td>
+                        <td>
+                          {item.error_message || item.error_code ? (
+                            <div style={{ maxWidth: '220px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={`${item.error_code ? `[Code ${item.error_code}] ` : ''}${item.error_message || item.error_reason || ''}`}>
+                              {item.error_code && (
+                                <span className="badge" style={{ background: '#FEE2E2', color: '#DC2626', fontSize: '0.65rem', padding: '1px 5px', marginRight: '4px' }}>
+                                  #{item.error_code}
+                                </span>
+                              )}
+                              <span style={{ color: '#DC2626', fontSize: '0.75rem' }}>
+                                {item.error_message || item.error_reason}
+                              </span>
+                            </div>
+                          ) : (
+                            <span style={{ color: '#94A3B8', fontSize: '0.75rem' }}>—</span>
+                          )}
                         </td>
                       </tr>
                     );

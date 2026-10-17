@@ -316,46 +316,89 @@ class WebhookService {
       return false; // ignore other states like 'sent'
     }
 
-    // Check existing status to avoid downgrading READ -> DELIVERED
+    // Resolve event timestamp from Meta payload (UNIX epoch seconds)
+    let eventTime = new Date().toISOString().replace("T", " ").substring(0, 19);
+    if (statusObj.timestamp) {
+      const tsSec = parseInt(statusObj.timestamp, 10);
+      if (!isNaN(tsSec) && tsSec > 0) {
+        eventTime = new Date(tsSec * 1000).toISOString().replace("T", " ").substring(0, 19);
+      }
+    }
+
+    // Check existing recipient record (indexed by meta_message_id for O(1) lookup)
     const recipient = db.prepare(`
-      SELECT id, status, campaign_id FROM campaign_recipients WHERE meta_message_id = ?
+      SELECT id, status, campaign_id, delivered_at, read_at 
+      FROM campaign_recipients 
+      WHERE meta_message_id = ?
     `).get(metaMessageId);
 
     if (!recipient) {
       return false;
     }
 
+    // Idempotency: Do not downgrade READ -> DELIVERED
     if (recipient.status === "READ" && newStatus === "DELIVERED") {
-      return false; // Do not overwrite READ with DELIVERED
+      return false;
     }
 
     let errorMsg = null;
+    let errorCode = null;
     if (newStatus === "FAILED" && Array.isArray(statusObj.errors) && statusObj.errors.length > 0) {
-      errorMsg = statusObj.errors[0]?.message || statusObj.errors[0]?.title || "Delivery failed";
+      const err = statusObj.errors[0];
+      errorCode = String(err.code || "");
+      errorMsg = err.message || err.title || `Meta delivery error (${errorCode})`;
+      if (err.error_data?.details) {
+        errorMsg += ` - ${err.error_data.details}`;
+      }
     }
 
-    if (errorMsg) {
+    // Update recipient with stage-specific delivery timestamps
+    if (newStatus === "DELIVERED") {
       db.prepare(`
         UPDATE campaign_recipients 
-        SET status = ?, error_message = ? 
+        SET status = 'DELIVERED', delivered_at = COALESCE(delivered_at, ?) 
         WHERE id = ?
-      `).run(newStatus, errorMsg, recipient.id);
-    } else {
-      db.prepare(`
-        UPDATE campaign_recipients 
-        SET status = ? 
-        WHERE id = ?
-      `).run(newStatus, recipient.id);
-    }
+      `).run(eventTime, recipient.id);
 
-    if (newStatus === "FAILED" && recipient.status !== "FAILED" && recipient.campaign_id) {
-      try {
-        db.prepare(`
-          UPDATE campaigns 
-          SET sent_count = MAX(0, sent_count - 1), failed_count = failed_count + 1 
-          WHERE id = ?
-        `).run(recipient.campaign_id);
-      } catch (err) {}
+      if (recipient.campaign_id && recipient.status !== "DELIVERED" && recipient.status !== "READ") {
+        try {
+          db.prepare("UPDATE campaigns SET delivered_count = delivered_count + 1 WHERE id = ?").run(recipient.campaign_id);
+        } catch (e) {}
+      }
+    } else if (newStatus === "READ") {
+      db.prepare(`
+        UPDATE campaign_recipients 
+        SET status = 'READ', read_at = COALESCE(read_at, ?), delivered_at = COALESCE(delivered_at, ?) 
+        WHERE id = ?
+      `).run(eventTime, eventTime, recipient.id);
+
+      if (recipient.campaign_id && recipient.status !== "READ") {
+        try {
+          const isFirstDelivery = recipient.status !== "DELIVERED";
+          db.prepare(`
+            UPDATE campaigns 
+            SET read_count = read_count + 1
+            ${isFirstDelivery ? ", delivered_count = delivered_count + 1" : ""}
+            WHERE id = ?
+          `).run(recipient.campaign_id);
+        } catch (e) {}
+      }
+    } else if (newStatus === "FAILED") {
+      db.prepare(`
+        UPDATE campaign_recipients 
+        SET status = 'FAILED', error_message = ?, error_code = ?, failed_at = COALESCE(failed_at, ?) 
+        WHERE id = ?
+      `).run(errorMsg, errorCode, eventTime, recipient.id);
+
+      if (newStatus === "FAILED" && recipient.status !== "FAILED" && recipient.campaign_id) {
+        try {
+          db.prepare(`
+            UPDATE campaigns 
+            SET sent_count = MAX(0, sent_count - 1), failed_count = failed_count + 1 
+            WHERE id = ?
+          `).run(recipient.campaign_id);
+        } catch (err) {}
+      }
     }
 
     return true;
