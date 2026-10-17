@@ -293,6 +293,9 @@ router.post("/replies/:id/reply", optionalAuth, webhookController.sendManualRepl
 router.post("/replies/:id/mark-read", optionalAuth, webhookController.markAsRead);
 router.post("/replies/mark-all-read", optionalAuth, webhookController.markAllAsRead);
 router.delete("/replies/:id", optionalAuth, webhookController.deleteReply);
+router.delete("/inbox/conversation/:phone", optionalAuth, webhookController.deleteConversation);
+router.delete("/inbox/conversation", optionalAuth, webhookController.deleteConversation);
+router.delete("/replies/conversation/:phone", optionalAuth, webhookController.deleteConversation);
 
 // Direct inbox reply by phone/contact (Supports formatted multi-line text, images, and videos)
 const { sendTextMessage, sendMediaMessage } = require("../services/metaWhatsAppService");

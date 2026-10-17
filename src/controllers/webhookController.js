@@ -260,6 +260,27 @@ function deleteReply(req, res) {
 }
 
 /**
+ * Deletes all messages in a conversation for a specific phone number
+ */
+function deleteConversation(req, res) {
+  try {
+    const phone = req.params.phone || req.body?.phone || req.query?.phone;
+    if (!phone) {
+      return res.status(400).json({ success: false, message: "Phone number is required to delete chat." });
+    }
+    const result = webhookService.deleteConversation(phone);
+    return res.status(200).json({
+      success: true,
+      message: "Chat conversation deleted successfully.",
+      deletedCount: result.deleted
+    });
+  } catch (error) {
+    console.error("[WebhookController] deleteConversation error:", error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+}
+
+/**
  * Simulates an incoming customer reply for local testing without external tunnel
  */
 function simulateTestReply(req, res) {
@@ -357,6 +378,7 @@ module.exports = {
   markAsRead,
   markAllAsRead,
   deleteReply,
+  deleteConversation,
   simulateTestReply,
   testHandshake,
   restartTunnel,

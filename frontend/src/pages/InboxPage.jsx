@@ -17,7 +17,8 @@ import {
   Image as ImageIcon,
   Video,
   FileVideo,
-  Play
+  Play,
+  Trash2
 } from 'lucide-react';
 
 export default function InboxPage() {
@@ -212,6 +213,74 @@ export default function InboxPage() {
   function handleBackToList() {
     setSelectedConvo(null);
     initialSelectionDone.current = true; // prevents background polling from forcing chat re-open
+  }
+
+  async function handleDeleteConversation(convo) {
+    if (!convo || !convo.phone) return;
+    const displayName = convo.name || `+${convo.phone}`;
+    const count = convo.messages?.length || 0;
+    const confirmed = window.confirm(
+      `Are you sure you want to delete the chat with ${displayName}?\n\nThis will permanently delete all ${count} message${count === 1 ? '' : 's'} in this conversation.`
+    );
+    if (!confirmed) return;
+
+    try {
+      const res = await fetch(`/api/inbox/conversation/${encodeURIComponent(convo.phone)}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (data.success) {
+        setConversations(prev => prev.filter(c => c.phone !== convo.phone));
+        setSelectedConvo(prev => (prev?.phone === convo.phone ? null : prev));
+      } else {
+        alert(data.message || 'Failed to delete chat.');
+      }
+    } catch (err) {
+      alert(err.message || 'Error deleting chat.');
+    }
+  }
+
+  async function handleDeleteMessage(msgId) {
+    if (!msgId || typeof msgId !== 'number') return;
+    const confirmed = window.confirm('Delete this message from chat history?');
+    if (!confirmed) return;
+
+    try {
+      const res = await fetch(`/api/replies/${msgId}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (data.success) {
+        setSelectedConvo(prev => {
+          if (!prev) return null;
+          const updatedMessages = prev.messages.filter(m => m.id !== msgId);
+          return {
+            ...prev,
+            messages: updatedMessages,
+            lastMessage: updatedMessages.length > 0 ? (updatedMessages[updatedMessages.length - 1].text || '[Media]') : 'No messages'
+          };
+        });
+        setConversations(prev =>
+          prev.map(c => {
+            if (c.phone === selectedConvo?.phone) {
+              const updatedMessages = c.messages.filter(m => m.id !== msgId);
+              return {
+                ...c,
+                messages: updatedMessages,
+                lastMessage: updatedMessages.length > 0 ? (updatedMessages[updatedMessages.length - 1].text || '[Media]') : 'No messages'
+              };
+            }
+            return c;
+          })
+        );
+      } else {
+        alert(data.message || 'Failed to delete message.');
+      }
+    } catch (err) {
+      alert(err.message || 'Error deleting message.');
+    }
   }
 
   function handleFileSelect(e) {
@@ -491,19 +560,51 @@ export default function InboxPage() {
                       </div>
                     </div>
 
-                    {c.unreadCount > 0 && (
-                      <span style={{
-                        background: 'var(--brand-wa)',
-                        color: '#FFFFFF',
-                        fontSize: '0.7rem',
-                        fontWeight: 700,
-                        padding: '2px 7px',
-                        borderRadius: '10px',
-                        flexShrink: 0
-                      }}>
-                        {c.unreadCount}
-                      </span>
-                    )}
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', justifyContent: 'space-between', flexShrink: 0, gap: '6px' }}>
+                      {c.unreadCount > 0 ? (
+                        <span style={{
+                          background: 'var(--brand-wa)',
+                          color: '#FFFFFF',
+                          fontSize: '0.7rem',
+                          fontWeight: 700,
+                          padding: '2px 7px',
+                          borderRadius: '10px'
+                        }}>
+                          {c.unreadCount}
+                        </span>
+                      ) : <span />}
+
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDeleteConversation(c);
+                        }}
+                        style={{
+                          background: 'transparent',
+                          border: 'none',
+                          color: '#94A3B8',
+                          padding: '3px',
+                          borderRadius: '4px',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          transition: 'all 0.15s ease'
+                        }}
+                        onMouseEnter={e => {
+                          e.currentTarget.style.color = '#DC2626';
+                          e.currentTarget.style.background = '#FEE2E2';
+                        }}
+                        onMouseLeave={e => {
+                          e.currentTarget.style.color = '#94A3B8';
+                          e.currentTarget.style.background = 'transparent';
+                        }}
+                        title={`Delete chat with ${c.name || c.phone}`}
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
                   </div>
                 );
               })
@@ -568,6 +669,36 @@ export default function InboxPage() {
                   <span className="badge badge-success" style={{ fontSize: '0.7rem', gap: '4px' }}>
                     <ShieldCheck size={12} /> WhatsApp Verified
                   </span>
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteConversation(selectedConvo)}
+                    style={{
+                      background: '#FEF2F2',
+                      border: '1px solid #FECACA',
+                      color: '#DC2626',
+                      cursor: 'pointer',
+                      padding: '5px 10px',
+                      borderRadius: '6px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '5px',
+                      fontSize: '0.75rem',
+                      fontWeight: 600,
+                      transition: 'all 0.15s ease'
+                    }}
+                    onMouseEnter={e => {
+                      e.currentTarget.style.background = '#FEE2E2';
+                      e.currentTarget.style.borderColor = '#F87171';
+                    }}
+                    onMouseLeave={e => {
+                      e.currentTarget.style.background = '#FEF2F2';
+                      e.currentTarget.style.borderColor = '#FECACA';
+                    }}
+                    title="Delete entire chat conversation"
+                  >
+                    <Trash2 size={13} />
+                    <span>Delete Chat</span>
+                  </button>
                   <button
                     type="button"
                     onClick={handleBackToList}
@@ -682,13 +813,36 @@ export default function InboxPage() {
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'flex-end',
-                        gap: '4px',
+                        gap: '6px',
                         fontSize: '0.675rem',
                         color: '#64748B',
                         marginTop: '4px'
                       }}>
                         <span>{displayTime}</span>
                         {isOutbound && <CheckCheck size={13} color="#2563EB" />}
+                        {typeof m.id === 'number' && (
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteMessage(m.id)}
+                            style={{
+                              background: 'transparent',
+                              border: 'none',
+                              color: '#94A3B8',
+                              cursor: 'pointer',
+                              padding: '2px',
+                              borderRadius: '3px',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              marginLeft: '2px',
+                              transition: 'color 0.15s ease'
+                            }}
+                            onMouseEnter={e => e.currentTarget.style.color = '#DC2626'}
+                            onMouseLeave={e => e.currentTarget.style.color = '#94A3B8'}
+                            title="Delete this message"
+                          >
+                            <Trash2 size={11} />
+                          </button>
+                        )}
                       </div>
                     </div>
                   );

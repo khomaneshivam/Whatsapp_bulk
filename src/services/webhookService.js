@@ -461,6 +461,23 @@ class WebhookService {
   }
 
   /**
+   * Deletes an entire chat conversation by customer phone number
+   */
+  deleteConversation(phone) {
+    if (!phone) return { deleted: 0 };
+    const rawPhone = String(phone).trim();
+    const cleanDigits = rawPhone.replace(/\D/g, "");
+    const withPlus = cleanDigits ? `+${cleanDigits}` : "";
+
+    const result = db.prepare(`
+      DELETE FROM customer_replies 
+      WHERE from_phone = ? OR from_phone = ? OR from_phone = ?
+    `).run(rawPhone, cleanDigits, withPlus);
+
+    return { deleted: result.changes };
+  }
+
+  /**
    * Simulates an incoming customer reply for testing without requiring a public webhook URL
    */
   simulateTestReply({ fromPhone = "919876543210", customerName = "Test Customer", messageBody = "Yes, I am interested! Please send more details.", campaignId = null }) {
