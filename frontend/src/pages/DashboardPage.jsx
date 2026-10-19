@@ -11,6 +11,7 @@ import {
   RefreshCw,
   Plus
 } from 'lucide-react';
+import { formatIndianDate } from '../utils/indianTime';
 
 export default function DashboardPage({ setActiveTab }) {
   const { token } = useAuth();
@@ -307,7 +308,7 @@ export default function DashboardPage({ setActiveTab }) {
                         <td>
                           <div style={{ fontWeight: 600, color: '#0F172A' }}>{camp.name}</div>
                           <div style={{ fontSize: '0.72rem', color: '#94A3B8' }}>
-                            {new Date(camp.created_at).toLocaleDateString()} • ID #{camp.id}
+                            {formatIndianDate(camp.created_at)} • ID #{camp.id}
                           </div>
                         </td>
                         <td>

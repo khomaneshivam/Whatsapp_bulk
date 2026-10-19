@@ -20,6 +20,7 @@ import {
   Play,
   Trash2
 } from 'lucide-react';
+import { formatIndianTime } from '../utils/indianTime';
 
 export default function InboxPage() {
   const { token } = useAuth();
@@ -541,7 +542,7 @@ export default function InboxPage() {
                           {c.name}
                         </span>
                         <span style={{ fontSize: '0.7rem', color: '#94A3B8', flexShrink: 0, marginLeft: '6px' }}>
-                          {c.lastTime ? new Date(c.lastTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
+                          {c.lastTime ? formatIndianTime(c.lastTime) : ''}
                         </span>
                       </div>
 
@@ -731,7 +732,7 @@ export default function InboxPage() {
               }}>
                 {selectedConvo.messages.map((m, idx) => {
                   const isOutbound = m.is_outbound;
-                  const displayTime = m.time ? new Date(m.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+                  const displayTime = m.time ? formatIndianTime(m.time) : '';
                   const hasMedia = Boolean(m.media_url);
                   const isVideo = m.media_type === 'video' || (m.media_url && /\.(mp4|3gp|mov|webm)(\?.*)?$/i.test(m.media_url));
                   const isImage = m.media_type === 'image' || (m.media_url && /\.(jpg|jpeg|png|webp|gif)(\?.*)?$/i.test(m.media_url)) || (!isVideo && hasMedia);

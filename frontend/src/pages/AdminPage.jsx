@@ -14,6 +14,7 @@ import {
   RefreshCw
 } from 'lucide-react';
 import AddPhoneNumberModal from '../components/AddPhoneNumberModal';
+import { formatIndianDate } from '../utils/indianTime';
 
 export default function AdminPage() {
   const { token, user: currentUser, impersonateUser } = useAuth();
@@ -316,7 +317,7 @@ export default function AdminPage() {
                           {u.name} {isCurrent && <span style={{ color: 'var(--brand-wa)', fontSize: '0.75rem' }}>(You)</span>}
                         </div>
                         <div style={{ fontSize: '0.72rem', color: '#94A3B8' }}>
-                          ID: {u.id} • Joined: {new Date(u.created_at).toLocaleDateString()}
+                          ID: {u.id} • Joined: {formatIndianDate(u.created_at)}
                         </div>
                       </td>
                       <td>

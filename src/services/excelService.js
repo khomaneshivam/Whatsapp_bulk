@@ -1,6 +1,7 @@
 const XLSX = require("xlsx");
 const path = require("path");
 const { cleanPhone } = require("./metaWhatsAppService");
+const timeUtil = require("../utils/timeUtil");
 
 /**
  * Supported upload extensions
@@ -326,9 +327,9 @@ function generateCampaignReportExcel(campaign, recipients) {
     { Property: "Read Rate (%)", Value: readRate },
     { Property: "Failed Count", Value: totalFailed },
     { Property: "Dispatch Throttle (ms)", Value: `${campaign.delay_ms || 250} ms` },
-    { Property: "Created At", Value: campaign.created_at || "" },
-    { Property: "Scheduled At", Value: campaign.scheduled_at || "Immediate" },
-    { Property: "Completed At", Value: campaign.completed_at || (campaign.status === "COMPLETED" ? "Finished" : "Active / In Progress") }
+    { Property: "Created At (IST)", Value: campaign.created_at ? `${timeUtil.formatIndianDateTime(campaign.created_at, true)} (IST)` : "" },
+    { Property: "Scheduled At (IST)", Value: campaign.scheduled_at ? `${timeUtil.formatIndianDateTime(campaign.scheduled_at, true)} (IST)` : "Immediate" },
+    { Property: "Completed At (IST)", Value: campaign.completed_at ? `${timeUtil.formatIndianDateTime(campaign.completed_at, true)} (IST)` : (campaign.status === "COMPLETED" ? "Finished" : "Active / In Progress") }
   ];
 
   const summarySheet = XLSX.utils.json_to_sheet(summaryData);
@@ -345,8 +346,10 @@ function generateCampaignReportExcel(campaign, recipients) {
 
   const detailsData = recipients.map((r, idx) => {
     let latencySec = "";
-    if (r.sent_at && r.delivered_at) {
-      const diffMs = new Date(r.delivered_at).getTime() - new Date(r.sent_at).getTime();
+    const sentDate = timeUtil.parseDateSmart(r.sent_at);
+    const deliveredDate = timeUtil.parseDateSmart(r.delivered_at);
+    if (sentDate && deliveredDate) {
+      const diffMs = deliveredDate.getTime() - sentDate.getTime();
       if (!isNaN(diffMs) && diffMs >= 0) {
         latencySec = (diffMs / 1000).toFixed(1) + "s";
       }
@@ -361,10 +364,10 @@ function generateCampaignReportExcel(campaign, recipients) {
       "Meta Message ID": sanitize(r.meta_message_id || ""),
       "Error Code": sanitize(r.error_code || ""),
       "Error / Reason": sanitize(r.error_message || ""),
-      "Dispatched At (Sent)": sanitize(r.sent_at || ""),
-      "Delivered At": sanitize(r.delivered_at || ""),
-      "Read At": sanitize(r.read_at || ""),
-      "Failed At": sanitize(r.failed_at || ""),
+      "Dispatched At (IST)": sanitize(r.sent_at ? timeUtil.formatIndianDateTime(r.sent_at, true) : ""),
+      "Delivered At (IST)": sanitize(r.delivered_at ? timeUtil.formatIndianDateTime(r.delivered_at, true) : ""),
+      "Read At (IST)": sanitize(r.read_at ? timeUtil.formatIndianDateTime(r.read_at, true) : ""),
+      "Failed At (IST)": sanitize(r.failed_at ? timeUtil.formatIndianDateTime(r.failed_at, true) : ""),
       "Delivery Turnaround Latency": latencySec
     };
   });

@@ -1,6 +1,7 @@
 const XLSX = require("xlsx");
 const { db } = require("../config/database");
 const { getScopedUserId } = require("../middleware/authMiddleware");
+const timeUtil = require("../utils/timeUtil");
 
 /**
  * Get detailed campaign delivery reports with pagination and filtering
@@ -145,11 +146,15 @@ async function exportCampaignReport(req, res) {
       return res.status(404).json({ success: false, message: "No recipient records found to export." });
     }
 
-    // Apply security sanitization to all exported values
+    // Apply security sanitization and format timestamps to Indian Standard Time (IST)
     const rows = rawRows.map(row => {
       const sanitized = {};
       for (const [key, value] of Object.entries(row)) {
-        sanitized[key] = sanitizeCell(value);
+        if (["Dispatched At", "Delivered At", "Read At", "Failed At"].includes(key)) {
+          sanitized[`${key} (IST)`] = value ? sanitizeCell(timeUtil.formatIndianDateTime(value, true)) : "";
+        } else {
+          sanitized[key] = sanitizeCell(value);
+        }
       }
       return sanitized;
     });

@@ -15,6 +15,23 @@ export default function Topbar({ activeTab, setActiveTab, setMobileOpen }) {
   const [activeNumber, setActiveNumber] = useState(null);
   const [isVerifying, setIsVerifying] = useState(false);
   const [showAddPhoneModal, setShowAddPhoneModal] = useState(false);
+  const [istTime, setIstTime] = useState('');
+
+  useEffect(() => {
+    function updateClock() {
+      const now = new Date();
+      setIstTime(new Intl.DateTimeFormat('en-IN', {
+        timeZone: 'Asia/Kolkata',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: true
+      }).format(now));
+    }
+    updateClock();
+    const interval = setInterval(updateClock, 1000);
+    return () => clearInterval(interval);
+  }, []);
 
   useEffect(() => {
     checkMetaHealth();
@@ -105,6 +122,29 @@ export default function Topbar({ activeTab, setActiveTab, setMobileOpen }) {
 
       {/* Right: Meta Status, Sender Line, & Quick Action */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+        {/* Live Indian Standard Time (IST) Clock */}
+        <div 
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+            padding: '5px 12px',
+            borderRadius: '6px',
+            background: '#F8FAFC',
+            border: '1px solid var(--border-color)',
+            fontSize: '0.75rem',
+            color: '#334155',
+            fontWeight: 600
+          }}
+          title="System operating on Indian Standard Time (Asia/Kolkata, UTC+05:30)"
+        >
+          <span style={{ fontSize: '0.85rem' }}>🇮🇳</span>
+          <span>{istTime || 'IST Clock'}</span>
+          <span style={{ fontSize: '0.62rem', background: '#E2E8F0', color: '#475569', padding: '1px 5px', borderRadius: '4px', fontWeight: 700 }}>
+            IST
+          </span>
+        </div>
+
         {/* Meta Health Pill */}
         <div 
           onClick={checkMetaHealth}

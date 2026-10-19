@@ -21,6 +21,7 @@ import {
   CheckCheck,
   MessageSquare
 } from 'lucide-react';
+import { formatIndianDateTime, formatIndianTime, formatIndianDate } from '../utils/indianTime';
 
 export default function ReportsPage() {
   const { token } = useAuth();
@@ -584,7 +585,7 @@ export default function ReportsPage() {
                               </span>
                               {camp.scheduled_at && (
                                 <span style={{ fontSize: '0.68rem', color: '#6D28D9', fontWeight: 600 }}>
-                                  {new Date(camp.scheduled_at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                                  {formatIndianDateTime(camp.scheduled_at)}
                                 </span>
                               )}
                             </div>
@@ -614,11 +615,11 @@ export default function ReportsPage() {
                         <td style={{ fontSize: '0.75rem', color: '#64748B' }}>
                           {camp.scheduled_at ? (
                             <div>
-                              <div style={{ fontWeight: 600, color: '#0F172A' }}>{new Date(camp.scheduled_at).toLocaleString()}</div>
-                              <div style={{ fontSize: '0.68rem', color: '#94A3B8' }}>Created: {new Date(camp.created_at).toLocaleDateString()}</div>
+                              <div style={{ fontWeight: 600, color: '#0F172A' }}>{formatIndianDateTime(camp.scheduled_at)}</div>
+                              <div style={{ fontSize: '0.68rem', color: '#94A3B8' }}>Created: {formatIndianDate(camp.created_at)}</div>
                             </div>
                           ) : (
-                            camp.created_at ? new Date(camp.created_at).toLocaleString() : 'N/A'
+                            camp.created_at ? formatIndianDateTime(camp.created_at) : 'N/A'
                           )}
                         </td>
                         <td>
@@ -843,13 +844,13 @@ export default function ReportsPage() {
                           )}
                         </td>
                         <td style={{ fontSize: '0.75rem', color: deliveredTime ? '#15803D' : '#94A3B8', fontWeight: deliveredTime ? 600 : 400 }}>
-                          {deliveredTime ? new Date(deliveredTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—'}
+                          {deliveredTime ? formatIndianTime(deliveredTime, true) : '—'}
                         </td>
                         <td style={{ fontSize: '0.75rem', color: readTime ? '#2563EB' : '#94A3B8', fontWeight: readTime ? 700 : 400 }}>
-                          {readTime ? new Date(readTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—'}
+                          {readTime ? formatIndianTime(readTime, true) : '—'}
                         </td>
                         <td style={{ fontSize: '0.75rem', color: '#64748B' }}>
-                          {sentTime ? new Date(sentTime).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'N/A'}
+                          {sentTime ? formatIndianDateTime(sentTime) : 'N/A'}
                         </td>
                         <td style={{ fontFamily: 'var(--font-mono)', fontSize: '0.7rem', color: '#64748B', maxWidth: '140px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item.meta_message_id || ''}>
                           {item.meta_message_id || '—'}
@@ -939,7 +940,7 @@ export default function ReportsPage() {
                         </span>
                       </td>
                       <td style={{ fontSize: '0.75rem', color: '#64748B' }}>
-                        {item.dispatched_at || item.created_at ? new Date(item.dispatched_at || item.created_at).toLocaleString() : 'Just now'}
+                        {item.dispatched_at || item.created_at ? formatIndianDateTime(item.dispatched_at || item.created_at) : 'Just now'}
                       </td>
                     </tr>
                   ))

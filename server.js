@@ -1,3 +1,6 @@
+// Enforce Indian Standard Time (IST) globally across all Node.js operations
+process.env.TZ = "Asia/Kolkata";
+
 const express = require("express");
 const cors = require("cors");
 const path = require("path");

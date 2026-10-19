@@ -1,6 +1,8 @@
 const path = require("path");
 require("dotenv").config({ path: path.resolve(__dirname, "../../.env") });
 
+process.env.TZ = process.env.APP_TIMEZONE || "Asia/Kolkata";
+
 const config = {
   PORT: process.env.PORT || 5000,
   NODE_ENV: process.env.NODE_ENV || "development",

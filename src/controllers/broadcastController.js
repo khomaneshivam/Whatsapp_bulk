@@ -2,6 +2,7 @@ const { v4: uuidv4 } = require("uuid");
 const { db, getSetting } = require("../config/database");
 const broadcastEngine = require("../services/broadcastEngine");
 const { cleanPhone, sendTemplateMessage, sendTextMessage } = require("../services/metaWhatsAppService");
+const timeUtil = require("../utils/timeUtil");
 
 const schedulerService = require("../services/schedulerService");
 const { getTemplateDetails } = require("../services/metaWhatsAppService");
@@ -52,12 +53,12 @@ async function createCampaign(req, res) {
       if (!scheduledAt) {
         return res.status(400).json({ success: false, message: "Please specify a future date and time for the scheduled broadcast." });
       }
-      const schedDate = new Date(scheduledAt);
-      if (isNaN(schedDate.getTime())) {
+      const schedDate = timeUtil.parseDateSmart(scheduledAt);
+      if (!schedDate || isNaN(schedDate.getTime())) {
         return res.status(400).json({ success: false, message: "Invalid schedule date/time." });
       }
       if (schedDate.getTime() <= Date.now()) {
-        return res.status(400).json({ success: false, message: "Scheduled time must be in the future." });
+        return res.status(400).json({ success: false, message: "Scheduled time must be in the future (Indian Standard Time)." });
       }
       formattedScheduledAt = schedDate.toISOString();
       initialStatus = "SCHEDULED";
@@ -173,7 +174,7 @@ async function createCampaign(req, res) {
     const createdCampaign = db.prepare("SELECT * FROM campaigns WHERE id = ?").get(campaignId);
 
     const successMessage = isScheduled
-      ? `Campaign '${name}' scheduled for ${new Date(formattedScheduledAt).toLocaleString()} with ${validCount} contacts.`
+      ? `Campaign '${name}' scheduled for ${timeUtil.formatIndianDateTime(formattedScheduledAt)} (IST) with ${validCount} contacts.`
       : `Campaign '${name}' created successfully with ${validCount} contacts.`;
 
     return res.status(201).json({

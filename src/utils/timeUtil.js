@@ -155,24 +155,139 @@ class TimeUtil {
   }
 
   /**
-   * Formats any date into a human readable string in configured timezone
+   * Smart universal date parser that properly resolves Indian Standard Time (IST)
+   * and SQLite UTC representations without timezone drift.
    */
-  formatDateTime(dateVal, overrideTz = null) {
-    if (!dateVal) return "";
-    const tz = overrideTz || this.getTimezone();
-    const d = dateVal instanceof Date ? dateVal : new Date(dateVal);
-    if (isNaN(d.getTime())) return String(dateVal);
+  parseDateSmart(val) {
+    if (!val) return null;
+    if (val instanceof Date) return isNaN(val.getTime()) ? null : val;
+    if (typeof val === "number") {
+      // 10 digits = seconds epoch (e.g. from Meta webhook), 13 digits = ms epoch
+      return new Date(val < 1e11 ? val * 1000 : val);
+    }
+    const str = String(val).trim();
+    if (!str) return null;
 
-    const formatter = new Intl.DateTimeFormat("en-IN", {
-      timeZone: tz,
-      day: "numeric",
+    if (/^\d{10}$/.test(str)) {
+      return new Date(parseInt(str, 10) * 1000);
+    }
+    if (/^\d{13}$/.test(str)) {
+      return new Date(parseInt(str, 10));
+    }
+    // SQLite format YYYY-MM-DD HH:mm:ss without timezone -> stored in UTC
+    if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}(:\d{2})?$/.test(str)) {
+      return new Date(str.replace(" ", "T") + "Z");
+    }
+    // Datetime-local format YYYY-MM-DDTHH:mm without timezone -> user entered Indian time
+    if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$/.test(str)) {
+      return new Date(str + "+05:30");
+    }
+    const d = new Date(str);
+    return isNaN(d.getTime()) ? null : d;
+  }
+
+  /**
+   * Formats any date into a standardized Indian Standard Time (IST) string:
+   * e.g. "19 Oct 2026, 02:30 PM"
+   */
+  formatIndianDateTime(dateVal, includeSeconds = false) {
+    const d = this.parseDateSmart(dateVal);
+    if (!d) return "";
+
+    const options = {
+      timeZone: "Asia/Kolkata",
+      day: "2-digit",
       month: "short",
       year: "numeric",
       hour: "2-digit",
       minute: "2-digit",
       hour12: true
+    };
+    if (includeSeconds) {
+      options.second = "2-digit";
+    }
+
+    return new Intl.DateTimeFormat("en-IN", options).format(d);
+  }
+
+  /**
+   * Formats time only in Indian Standard Time (e.g. "02:30 PM")
+   */
+  formatIndianTime(dateVal, includeSeconds = false) {
+    const d = this.parseDateSmart(dateVal);
+    if (!d) return "";
+
+    const options = {
+      timeZone: "Asia/Kolkata",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true
+    };
+    if (includeSeconds) {
+      options.second = "2-digit";
+    }
+
+    return new Intl.DateTimeFormat("en-IN", options).format(d);
+  }
+
+  /**
+   * Formats date only in Indian Standard Time (e.g. "19 Oct 2026")
+   */
+  formatIndianDate(dateVal) {
+    const d = this.parseDateSmart(dateVal);
+    if (!d) return "";
+
+    return new Intl.DateTimeFormat("en-IN", {
+      timeZone: "Asia/Kolkata",
+      day: "2-digit",
+      month: "short",
+      year: "numeric"
+    }).format(d);
+  }
+
+  /**
+   * Returns current Indian timestamp formatted as "YYYY-MM-DD HH:mm:ss"
+   */
+  getIndianTimestampString(dateVal = new Date()) {
+    const d = this.parseDateSmart(dateVal) || new Date();
+    const formatter = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Kolkata",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false
     });
-    return formatter.format(d);
+    return formatter.format(d).replace(",", "");
+  }
+
+  /**
+   * Formats date for HTML datetime-local inputs in Indian Standard Time (YYYY-MM-DDTHH:mm)
+   */
+  getIndianCurrentInputString(dateVal = new Date()) {
+    const d = this.parseDateSmart(dateVal) || new Date();
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Kolkata",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false
+    }).formatToParts(d);
+
+    const lookup = {};
+    parts.forEach(p => { lookup[p.type] = p.value; });
+    return `${lookup.year}-${lookup.month}-${lookup.day}T${lookup.hour}:${lookup.minute}`;
+  }
+
+  /**
+   * Formats any date into a human readable string in configured timezone
+   */
+  formatDateTime(dateVal, overrideTz = null) {
+    return this.formatIndianDateTime(dateVal);
   }
 
   /**
@@ -181,7 +296,7 @@ class TimeUtil {
   getUtcOffsetString(timeZone, date = new Date()) {
     try {
       const parts = new Intl.DateTimeFormat("en-US", {
-        timeZone,
+        timeZone: "Asia/Kolkata",
         timeZoneName: "shortOffset"
       }).formatToParts(date);
       const tzPart = parts.find(p => p.type === "timeZoneName");

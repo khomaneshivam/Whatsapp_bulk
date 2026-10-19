@@ -16,6 +16,7 @@ import {
   Clock,
   Sparkles
 } from 'lucide-react';
+import { formatIndianDate, formatIndianTime } from '../utils/indianTime';
 
 export default function AutomationPage() {
   const { token } = useAuth();
@@ -584,7 +585,7 @@ export default function AutomationPage() {
             <div style={{ fontSize: '0.78rem', color: '#94A3B8', marginTop: '3px', display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
               <span>🔄 Auto-Sync: <strong>{autoSync ? `Every ${autoSyncIntervalHours} hour${autoSyncIntervalHours > 1 ? 's' : ''}` : 'Paused'}</strong></span>
               <span>•</span>
-              <span>⏱️ Last Synced: <strong>{lastSyncTime ? lastSyncTime.toLocaleTimeString() : 'Just now'}</strong></span>
+              <span>⏱️ Last Synced: <strong>{lastSyncTime ? formatIndianTime(lastSyncTime, true) : 'Just now'}</strong></span>
               <span>•</span>
               <span>📊 Active Records: <strong>{sheetData.length}</strong></span>
               {hasSavedUploads && (
@@ -1045,7 +1046,7 @@ export default function AutomationPage() {
               Live Booking Spreadsheet Inspector & Trigger Timelines
             </h2>
             <p style={{ fontSize: '0.8rem', color: '#64748B' }}>
-              All 4 lifecycle stages evaluated against today's date ({new Date().toLocaleDateString('en-GB')}, IST).
+              All 4 lifecycle stages evaluated against today's date ({formatIndianDate(new Date())}, Indian Standard Time - IST).
             </p>
           </div>
 

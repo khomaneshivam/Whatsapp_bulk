@@ -1,6 +1,7 @@
 const { db } = require("../config/database");
 const broadcastEngine = require("./broadcastEngine");
 const bookingAutomationService = require("./bookingAutomationService");
+const timeUtil = require("../utils/timeUtil");
 
 class SchedulerService {
   constructor() {
@@ -77,22 +78,22 @@ class SchedulerService {
       `).all();
 
       for (const campaign of scheduledCampaigns) {
-        const schedDate = new Date(campaign.scheduled_at);
-        if (isNaN(schedDate.getTime())) {
+        const schedDate = timeUtil.parseDateSmart(campaign.scheduled_at);
+        if (!schedDate || isNaN(schedDate.getTime())) {
           console.warn(`[Scheduler] Invalid scheduled_at for campaign ${campaign.id}:`, campaign.scheduled_at);
           continue;
         }
 
         // If scheduled time has arrived or passed (within current time)
-        if (schedDate <= now) {
-          console.log(`[Scheduler] 🚀 Triggering scheduled broadcast: '${campaign.name}' (${campaign.id}) scheduled for ${schedDate.toISOString()}`);
+        if (schedDate.getTime() <= Date.now()) {
+          console.log(`[Scheduler] 🚀 Triggering scheduled broadcast: '${campaign.name}' (${campaign.id}) scheduled for ${timeUtil.formatIndianDateTime(schedDate)} IST`);
           
           try {
             await broadcastEngine.startCampaign(campaign.id);
             broadcastEngine.emit("campaign:status", {
               campaignId: campaign.id,
               status: "RUNNING",
-              message: `Scheduled broadcast '${campaign.name}' has automatically launched.`
+              message: `Scheduled broadcast '${campaign.name}' has automatically launched at ${timeUtil.formatIndianDateTime(new Date())} (IST).`
             });
           } catch (launchErr) {
             console.error(`[Scheduler] Failed to auto-launch campaign ${campaign.id}:`, launchErr.message);
@@ -125,13 +126,13 @@ class SchedulerService {
       throw new Error("Cannot reschedule a campaign that is currently running.");
     }
 
-    const newDate = new Date(newScheduledAt);
-    if (isNaN(newDate.getTime())) {
+    const newDate = timeUtil.parseDateSmart(newScheduledAt);
+    if (!newDate || isNaN(newDate.getTime())) {
       throw new Error("Invalid date/time provided for scheduling.");
     }
 
-    if (newDate <= new Date()) {
-      throw new Error("Scheduled time must be in the future.");
+    if (newDate.getTime() <= Date.now()) {
+      throw new Error("Scheduled time must be in the future (Indian Standard Time).");
     }
 
     const isoTime = newDate.toISOString();
@@ -141,16 +142,18 @@ class SchedulerService {
       WHERE id = ?
     `).run(isoTime, campaignId);
 
+    const formattedIst = timeUtil.formatIndianDateTime(newDate);
+
     broadcastEngine.emit("campaign:status", {
       campaignId,
       status: "SCHEDULED",
       scheduledAt: isoTime,
-      message: `Campaign '${campaign.name}' rescheduled for ${newDate.toLocaleString()}.`
+      message: `Campaign '${campaign.name}' rescheduled for ${formattedIst} (IST).`
     });
 
     return {
       success: true,
-      message: `Campaign rescheduled for ${newDate.toLocaleString()}.`,
+      message: `Campaign rescheduled for ${formattedIst} (IST).`,
       scheduledAt: isoTime
     };
   }

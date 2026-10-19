@@ -29,6 +29,7 @@ import {
   AlertTriangle,
   Image as ImageIcon
 } from 'lucide-react';
+import { formatIndianDateTime, formatIndianTime, formatIndianDate, getIndianCurrentInputString } from '../utils/indianTime';
 import AddPhoneNumberModal from '../components/AddPhoneNumberModal';
 
 export default function BroadcastPage() {
@@ -501,9 +502,9 @@ export default function BroadcastPage() {
           status: 'SCHEDULED'
         });
         setStreamLogs([
-          { time: new Date().toLocaleTimeString(), text: `⏰ Campaign '${campaignName || data.campaignId}' scheduled for ${new Date(scheduledTime).toLocaleString()}!` },
-          { time: new Date().toLocaleTimeString(), text: `Status: SCHEDULED. Target contacts: ${data.totalRecipients || validationStats.valid || fileRows.length || 0}. The scheduler will auto-launch this at the specified time.` },
-          { time: new Date().toLocaleTimeString(), text: `ℹ️ You can trigger "Run Now" below to dispatch immediately or "Cancel Schedule" if you change your mind.` }
+          { time: formatIndianTime(new Date(), true), text: `⏰ Campaign '${campaignName || data.campaignId}' scheduled for ${formatIndianDateTime(scheduledTime)} (IST)!` },
+          { time: formatIndianTime(new Date(), true), text: `Status: SCHEDULED. Target contacts: ${data.totalRecipients || validationStats.valid || fileRows.length || 0}. The scheduler will auto-launch this at the specified time.` },
+          { time: formatIndianTime(new Date(), true), text: `ℹ️ You can trigger "Run Now" below to dispatch immediately or "Cancel Schedule" if you change your mind.` }
         ]);
         loadScheduledQueue();
       } else {
@@ -776,7 +777,7 @@ export default function BroadcastPage() {
                     <span>Template: <strong>{item.template_name}</strong></span>
                     <span>Targets: <strong>{item.valid_contacts || item.total_contacts}</strong></span>
                     <span style={{ color: '#7C3AED', fontWeight: 600 }}>
-                      ⏰ Scheduled for: <strong>{new Date(item.scheduled_at).toLocaleString()}</strong>
+                      ⏰ Scheduled for: <strong>{formatIndianDateTime(item.scheduled_at)} (IST)</strong>
                     </span>
                   </div>
                 </div>
@@ -1865,15 +1866,24 @@ export default function BroadcastPage() {
 
                 {isScheduled && (
                   <div>
-                    <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: '#334155', marginBottom: '6px' }}>
-                      Dispatch Date & Time
-                    </label>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                      <label style={{ fontSize: '0.8rem', fontWeight: 600, color: '#334155' }}>
+                        Dispatch Date & Time (Indian Standard Time - IST)
+                      </label>
+                      <span className="badge" style={{ background: '#EDE9FE', color: '#6D28D9', fontSize: '0.68rem', fontWeight: 700, padding: '2px 8px' }}>
+                        🇮🇳 UTC+05:30 (Asia/Kolkata)
+                      </span>
+                    </div>
                     <input
                       type="datetime-local"
                       className="saas-input"
                       value={scheduledTime}
+                      min={getIndianCurrentInputString(2)}
                       onChange={e => setScheduledTime(e.target.value)}
                     />
+                    <div style={{ fontSize: '0.72rem', color: '#64748B', marginTop: '6px' }}>
+                      Campaign will auto-launch when clock reaches this exact Indian Standard Time.
+                    </div>
                   </div>
                 )}
               </div>
@@ -2053,7 +2063,7 @@ export default function BroadcastPage() {
                   <Clock size={22} color="#7C3AED" />
                   <div>
                     <div style={{ fontSize: '0.9rem', fontWeight: 800, color: '#5B21B6' }}>
-                      Scheduled for {scheduledTime ? new Date(scheduledTime).toLocaleString() : 'Future Date/Time'}
+                      Scheduled for {scheduledTime ? `${formatIndianDateTime(scheduledTime)} (IST)` : 'Future Date/Time'}
                     </div>
                     <div style={{ fontSize: '0.75rem', color: '#6D28D9' }}>
                       Waiting in queue. You can run it immediately or cancel this schedule.
