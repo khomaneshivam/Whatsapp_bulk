@@ -115,6 +115,51 @@ export default function BroadcastPage() {
     { label: '⏳ Relaxed', ms: 2000, hint: '~0.5 msg/s' }
   ];
 
+  // Milestone points positioned along the interactive throttle bar
+  const DELAY_MILESTONES = [
+    { ms: 50, label: '50ms', tag: 'Ultra Fast', speed: '~20/s', pct: 0 },
+    { ms: 100, label: '100ms', tag: 'Turbo', speed: '~10/s', pct: 16.67 },
+    { ms: 250, label: '250ms', tag: 'Optimal', speed: '~4/s', pct: 33.33 },
+    { ms: 500, label: '500ms', tag: 'Safe', speed: '~2/s', pct: 50.0 },
+    { ms: 1000, label: '1000ms', tag: 'Standard', speed: '~1/s', pct: 66.67 },
+    { ms: 2000, label: '2000ms', tag: 'Relaxed', speed: '~0.5/s', pct: 83.33 },
+    { ms: 3000, label: '3000ms', tag: 'Gentle', speed: '~0.3/s', pct: 100 }
+  ];
+
+  function delayToPercent(ms) {
+    const val = Number(ms) || 50;
+    if (val <= DELAY_MILESTONES[0].ms) return 0;
+    if (val >= DELAY_MILESTONES[DELAY_MILESTONES.length - 1].ms) return 100;
+    for (let i = 0; i < DELAY_MILESTONES.length - 1; i++) {
+      const cur = DELAY_MILESTONES[i];
+      const next = DELAY_MILESTONES[i + 1];
+      if (val >= cur.ms && val <= next.ms) {
+        const ratio = (val - cur.ms) / (next.ms - cur.ms);
+        return cur.pct + ratio * (next.pct - cur.pct);
+      }
+    }
+    return 50;
+  }
+
+  function percentToDelay(pct) {
+    const p = Math.max(0, Math.min(100, Number(pct) || 0));
+    for (const m of DELAY_MILESTONES) {
+      if (Math.abs(p - m.pct) <= 2.2) {
+        return m.ms;
+      }
+    }
+    for (let i = 0; i < DELAY_MILESTONES.length - 1; i++) {
+      const cur = DELAY_MILESTONES[i];
+      const next = DELAY_MILESTONES[i + 1];
+      if (p >= cur.pct && p <= next.pct) {
+        const ratio = (p - cur.pct) / (next.pct - cur.pct);
+        const rawMs = cur.ms + ratio * (next.ms - cur.ms);
+        return Math.round(rawMs / 25) * 25;
+      }
+    }
+    return 250;
+  }
+
   function formatDuration(totalMs) {
     if (!totalMs || totalMs <= 0) return '0s';
     const totalSecs = Math.ceil(totalMs / 1000);
@@ -2120,62 +2165,163 @@ export default function BroadcastPage() {
                   </div>
                 </div>
 
-                {/* Slider + Manual Number Input */}
+                {/* Interactive Dispatch Delay Slider with Clickable Milestone Points */}
                 <div style={{
                   background: '#F8FAFC',
                   border: '1px solid #E2E8F0',
-                  borderRadius: '10px',
-                  padding: '16px',
+                  borderRadius: '12px',
+                  padding: '16px 18px',
                   marginBottom: '16px'
                 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
-                    <label htmlFor="step3ThrottleSlider" style={{ fontSize: '0.8rem', fontWeight: 600, color: '#334155' }}>
-                      Adjust Dispatch Delay:
-                    </label>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                      <input
-                        type="number"
-                        min="0"
-                        max="10000"
-                        step="25"
-                        value={throttleDelay}
-                        onChange={e => setThrottleDelay(Math.max(0, parseInt(e.target.value, 10) || 0))}
-                        className="saas-input"
-                        style={{
-                          width: '95px',
-                          padding: '5px 8px',
-                          fontSize: '0.875rem',
-                          fontWeight: 700,
-                          textAlign: 'right'
-                        }}
-                      />
-                      <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#64748B' }}>ms</span>
+                  {/* Top Row: Label, Safety Tier Badge, Manual Number Input */}
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px', flexWrap: 'wrap', gap: '8px' }}>
+                    <div>
+                      <label htmlFor="step3ThrottleSlider" style={{ fontSize: '0.85rem', fontWeight: 700, color: '#1E293B', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <span>Adjust Dispatch Delay:</span>
+                      </label>
+                      <div style={{ fontSize: '0.72rem', color: '#64748B', marginTop: '2px' }}>
+                        Click any point on the bar or drag to fine-tune pacing
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <div style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        padding: '3px 9px',
+                        borderRadius: '6px',
+                        fontSize: '0.72rem',
+                        fontWeight: 700,
+                        background: currentSafetyTier.badgeBg,
+                        color: currentSafetyTier.badgeColor,
+                        border: `1px solid ${currentSafetyTier.badgeBorder}`
+                      }}>
+                        {currentSafetyTier.label}
+                      </div>
+
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                        <input
+                          type="number"
+                          min="0"
+                          max="10000"
+                          step="25"
+                          value={throttleDelay}
+                          onChange={e => setThrottleDelay(Math.max(0, parseInt(e.target.value, 10) || 0))}
+                          className="saas-input"
+                          style={{
+                            width: '95px',
+                            padding: '5px 8px',
+                            fontSize: '0.9rem',
+                            fontWeight: 800,
+                            color: '#0F172A',
+                            textAlign: 'right'
+                          }}
+                        />
+                        <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#64748B' }}>ms</span>
+                      </div>
                     </div>
                   </div>
 
-                  <input
-                    id="step3ThrottleSlider"
-                    type="range"
-                    min="50"
-                    max="3000"
-                    step="25"
-                    value={Math.min(3000, Math.max(50, throttleDelay))}
-                    onChange={e => setThrottleDelay(parseInt(e.target.value, 10))}
-                    style={{
-                      width: '100%',
-                      height: '6px',
-                      borderRadius: '999px',
-                      accentColor: 'var(--brand-wa)',
-                      cursor: 'pointer'
-                    }}
-                  />
+                  {/* Slider Track with Clickable Milestone Points on the Bar */}
+                  <div className="throttle-bar-container" style={{ padding: '14px 6px 6px 6px' }}>
+                    <div className="throttle-bar-track">
+                      {/* Gradient Fill Track */}
+                      <div
+                        className="throttle-bar-fill"
+                        style={{ width: `${Math.min(100, Math.max(0, delayToPercent(throttleDelay)))}%` }}
+                      />
 
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', color: '#94A3B8', marginTop: '6px' }}>
-                    <span>50ms (Ultra Fast)</span>
-                    <span>250ms (Optimal)</span>
-                    <span>500ms (Safe)</span>
-                    <span>1000ms</span>
-                    <span>3000ms (Gentle)</span>
+                      {/* Interactive Clickable Milestone Points along the bar */}
+                      {DELAY_MILESTONES.map(m => {
+                        const isCurrent = Math.abs(throttleDelay - m.ms) < 15;
+                        const isPassed = throttleDelay >= m.ms;
+                        return (
+                          <div
+                            key={m.ms}
+                            className="throttle-milestone-node"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setThrottleDelay(m.ms);
+                            }}
+                            title={`${m.label} (${m.tag}) • ${m.speed}`}
+                            style={{ left: `${m.pct}%` }}
+                          >
+                            <div
+                              className={`throttle-milestone-dot ${isPassed ? 'passed' : 'unpassed'} ${isCurrent ? 'active' : ''}`}
+                              style={{
+                                width: isCurrent ? '16px' : '12px',
+                                height: isCurrent ? '16px' : '12px',
+                                background: isCurrent ? '#128C7E' : (isPassed ? '#10B981' : '#FFFFFF'),
+                                border: isCurrent ? '3px solid #FFFFFF' : (isPassed ? '2px solid #FFFFFF' : '2px solid #94A3B8'),
+                                boxShadow: isCurrent 
+                                  ? '0 0 0 3px #128C7E, 0 2px 8px rgba(18, 140, 126, 0.45)' 
+                                  : (isPassed ? '0 1px 3px rgba(0,0,0,0.2)' : '0 1px 3px rgba(0,0,0,0.1)')
+                              }}
+                            >
+                              {isCurrent && (
+                                <div style={{ width: '4px', height: '4px', borderRadius: '50%', background: '#FFFFFF' }} />
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+
+                      {/* Native Range Slider Overlaid for smooth dragging */}
+                      <input
+                        id="step3ThrottleSlider"
+                        className="throttle-native-slider"
+                        type="range"
+                        min="0"
+                        max="100"
+                        step="0.5"
+                        value={Math.min(100, Math.max(0, delayToPercent(throttleDelay)))}
+                        onChange={e => setThrottleDelay(percentToDelay(parseFloat(e.target.value)))}
+                      />
+                    </div>
+
+                    {/* Milestone Labels Directly Under Each Point */}
+                    <div style={{
+                      position: 'relative',
+                      height: '38px',
+                      marginTop: '16px',
+                      userSelect: 'none'
+                    }}>
+                      {DELAY_MILESTONES.map((m, idx) => {
+                        const isCurrent = Math.abs(throttleDelay - m.ms) < 15;
+                        let transformAlign = 'translateX(-50%)';
+                        if (idx === 0) transformAlign = 'translateX(0)';
+                        else if (idx === DELAY_MILESTONES.length - 1) transformAlign = 'translateX(-100%)';
+
+                        return (
+                          <button
+                            key={m.ms}
+                            type="button"
+                            className={`throttle-milestone-btn ${isCurrent ? 'active' : ''}`}
+                            onClick={() => setThrottleDelay(m.ms)}
+                            style={{
+                              position: 'absolute',
+                              left: `${m.pct}%`,
+                              transform: transformAlign
+                            }}
+                          >
+                            <div style={{
+                              fontSize: '0.725rem',
+                              fontWeight: isCurrent ? 800 : 700,
+                              color: isCurrent ? '#15803D' : '#334155'
+                            }}>
+                              {m.label}
+                            </div>
+                            <div style={{
+                              fontSize: '0.625rem',
+                              fontWeight: 600,
+                              color: isCurrent ? '#166534' : '#94A3B8'
+                            }}>
+                              {m.tag}
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
                 </div>
 
@@ -2521,22 +2667,97 @@ export default function BroadcastPage() {
                 </div>
               </div>
 
-              {/* Slider for on-the-fly adjustment */}
-              <input
-                type="range"
-                min="50"
-                max="3000"
-                step="25"
-                disabled={progressStats.status === 'COMPLETED' || progressStats.status === 'CANCELLED'}
-                value={Math.min(3000, Math.max(50, liveDelay))}
-                onChange={e => handleLiveThrottleChange(e.target.value)}
-                style={{
-                  width: '100%',
-                  height: '5px',
-                  accentColor: 'var(--brand-wa)',
-                  cursor: 'pointer'
-                }}
-              />
+              {/* Slider for on-the-fly adjustment with interactive milestone points */}
+              <div className="throttle-bar-container" style={{ padding: '12px 6px 4px 6px' }}>
+                <div className="throttle-bar-track" style={{ height: '6px' }}>
+                  <div
+                    className="throttle-bar-fill"
+                    style={{ width: `${Math.min(100, Math.max(0, delayToPercent(liveDelay)))}%` }}
+                  />
+
+                  {/* Interactive milestone points on the live bar */}
+                  {DELAY_MILESTONES.map(m => {
+                    const isCurrent = Math.abs(liveDelay - m.ms) < 15;
+                    const isPassed = liveDelay >= m.ms;
+                    return (
+                      <div
+                        key={m.ms}
+                        className="throttle-milestone-node"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (progressStats.status !== 'COMPLETED' && progressStats.status !== 'CANCELLED') {
+                            handleLiveThrottleChange(m.ms);
+                          }
+                        }}
+                        title={`${m.label} (${m.tag}) • ${m.speed}`}
+                        style={{
+                          left: `${m.pct}%`,
+                          cursor: (progressStats.status === 'COMPLETED' || progressStats.status === 'CANCELLED') ? 'not-allowed' : 'pointer'
+                        }}
+                      >
+                        <div
+                          className={`throttle-milestone-dot ${isPassed ? 'passed' : 'unpassed'} ${isCurrent ? 'active' : ''}`}
+                          style={{
+                            width: isCurrent ? '14px' : '10px',
+                            height: isCurrent ? '14px' : '10px',
+                            background: isCurrent ? '#128C7E' : (isPassed ? '#10B981' : '#FFFFFF'),
+                            border: isCurrent ? '2.5px solid #FFFFFF' : (isPassed ? '1.5px solid #FFFFFF' : '1.5px solid #94A3B8'),
+                            boxShadow: isCurrent ? '0 0 0 2.5px #128C7E' : '0 1px 2px rgba(0,0,0,0.1)'
+                          }}
+                        />
+                      </div>
+                    );
+                  })}
+
+                  <input
+                    type="range"
+                    min="0"
+                    max="100"
+                    step="0.5"
+                    disabled={progressStats.status === 'COMPLETED' || progressStats.status === 'CANCELLED'}
+                    value={Math.min(100, Math.max(0, delayToPercent(liveDelay)))}
+                    onChange={e => handleLiveThrottleChange(percentToDelay(parseFloat(e.target.value)))}
+                    className="throttle-native-slider"
+                    style={{
+                      cursor: (progressStats.status === 'COMPLETED' || progressStats.status === 'CANCELLED') ? 'not-allowed' : 'pointer'
+                    }}
+                  />
+                </div>
+
+                {/* Milestone mini labels */}
+                <div style={{ position: 'relative', height: '22px', marginTop: '10px' }}>
+                  {DELAY_MILESTONES.map((m, idx) => {
+                    const isCurrent = Math.abs(liveDelay - m.ms) < 15;
+                    let transformAlign = 'translateX(-50%)';
+                    if (idx === 0) transformAlign = 'translateX(0)';
+                    else if (idx === DELAY_MILESTONES.length - 1) transformAlign = 'translateX(-100%)';
+
+                    return (
+                      <button
+                        key={m.ms}
+                        type="button"
+                        disabled={progressStats.status === 'COMPLETED' || progressStats.status === 'CANCELLED'}
+                        onClick={() => handleLiveThrottleChange(m.ms)}
+                        style={{
+                          position: 'absolute',
+                          left: `${m.pct}%`,
+                          transform: transformAlign,
+                          background: isCurrent ? '#F0FDF4' : 'transparent',
+                          border: isCurrent ? '1px solid #86EFAC' : '1px solid transparent',
+                          borderRadius: '4px',
+                          padding: '1px 4px',
+                          cursor: (progressStats.status === 'COMPLETED' || progressStats.status === 'CANCELLED') ? 'not-allowed' : 'pointer',
+                          fontSize: '0.675rem',
+                          fontWeight: isCurrent ? 800 : 600,
+                          color: isCurrent ? '#15803D' : '#64748B'
+                        }}
+                      >
+                        {m.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
             </div>
 
             {/* Real-time Log Box */}
