@@ -7,6 +7,32 @@ const broadcastEngine = require("./broadcastEngine");
 const { sendTextMessage, downloadAndSaveInboundMedia } = require("./metaWhatsAppService");
 
 class WebhookService {
+  constructor() {
+    this.inFlightAutoReplies = new Set();
+  }
+
+  /**
+   * Generates phone number variations to match across all formats (+91, 91, 10-digit national)
+   */
+  getPhoneVariations(phone) {
+    const raw = String(phone || "").trim();
+    const digits = raw.replace(/\D/g, "");
+    if (!digits) return raw ? [raw] : [];
+
+    const set = new Set([raw, digits, `+${digits}`]);
+    if (digits.startsWith("91") && digits.length === 12) {
+      const national = digits.substring(2);
+      set.add(national);
+      set.add(`+${national}`);
+      set.add(`0${national}`);
+    } else if (digits.length === 10) {
+      set.add(`91${digits}`);
+      set.add(`+91${digits}`);
+      set.add(`0${digits}`);
+    }
+    return Array.from(set);
+  }
+
   /**
    * Retrieves active webhook verify token from database or env
    */
@@ -670,6 +696,7 @@ class WebhookService {
 
   /**
    * Automatically sends an automated WhatsApp reply to incoming customer message
+   * Ensures automated message is sent ONLY ONCE per contact (not on every subsequent message).
    */
   async triggerAutoReply(replyRecord) {
     if (!replyRecord || !replyRecord.from_phone) return null;
@@ -679,36 +706,63 @@ class WebhookService {
       return null;
     }
 
-    const cleanPhone = String(replyRecord.from_phone).replace(/\D/g, "");
+    const rawPhone = String(replyRecord.from_phone).trim();
+    const cleanPhone = rawPhone.replace(/\D/g, "");
     if (!cleanPhone || cleanPhone.length < 10) return null;
 
-    // Debounce / Anti-Loop check: Don't auto-reply if we already auto-replied to this contact within last 15 minutes
-    try {
-      const recentAutoReply = db.prepare(`
-        SELECT id FROM customer_replies 
-        WHERE from_phone = ? AND reply_status = 'AUTO_REPLIED' 
-        AND reply_sent_at > datetime('now', '-15 minutes')
-        LIMIT 1
-      `).get(replyRecord.from_phone);
-
-      if (recentAutoReply) {
-        console.log(`[Webhook AutoReply] Throttled: Already auto-replied to ${cleanPhone} in the last 15 minutes.`);
-        return null;
-      }
-    } catch (checkErr) {
-      console.warn("[Webhook AutoReply] Throttling check warning:", checkErr.message);
+    // Concurrency Lock: Prevent rapid burst incoming messages from the same phone from racing
+    if (this.inFlightAutoReplies.has(cleanPhone)) {
+      console.log(`[Webhook AutoReply] Concurrency: Auto-reply already in-flight for ${cleanPhone}. Skipping duplicate webhook.`);
+      return null;
     }
 
-    // Format auto-reply template message
-    let templateMsg = getSetting("AUTO_REPLY_MESSAGE") || 
-      "Hi {{name}}, thank you for reaching out to KonkanTrip! We have received your message. Our team will get back to you shortly.";
-    
-    const customerName = replyRecord.customer_name ? replyRecord.customer_name.trim() : "there";
-    const finalMsg = templateMsg.replace(/\{\{name\}\}/gi, customerName);
-
-    console.log(`[Webhook AutoReply] Sending auto-reply to ${cleanPhone} (${customerName}): "${finalMsg}"`);
+    this.inFlightAutoReplies.add(cleanPhone);
 
     try {
+      const mode = getSetting("AUTO_REPLY_MODE") || "ONCE_PER_CONTACT";
+      const phoneVars = this.getPhoneVariations(rawPhone);
+      const placeholders = phoneVars.map(() => "?").join(",");
+
+      // Check whether this contact already received an auto-reply or had an outbound reply/conversation
+      if (mode === "ONCE_PER_24_HOURS") {
+        const priorRecent = db.prepare(`
+          SELECT id, reply_status, message_type, reply_sent_at 
+          FROM customer_replies 
+          WHERE (from_phone IN (${placeholders}) OR REPLACE(REPLACE(REPLACE(from_phone, '+', ''), ' ', ''), '-', '') = ?)
+            AND (reply_status = 'AUTO_REPLIED' OR message_type = 'outbound' OR reply_status = 'SENT')
+            AND reply_sent_at > datetime('now', '-24 hours')
+          LIMIT 1
+        `).get(...phoneVars, cleanPhone);
+
+        if (priorRecent) {
+          console.log(`[Webhook AutoReply] Throttled: Already replied to ${cleanPhone} in the last 24 hours (Reply #${priorRecent.id}, sent: ${priorRecent.reply_sent_at}).`);
+          return null;
+        }
+      } else {
+        // Default mode: ONCE_PER_CONTACT (Send only once ever per contact)
+        const priorReply = db.prepare(`
+          SELECT id, reply_status, message_type, reply_sent_at 
+          FROM customer_replies 
+          WHERE (from_phone IN (${placeholders}) OR REPLACE(REPLACE(REPLACE(from_phone, '+', ''), ' ', ''), '-', '') = ?)
+            AND (reply_status = 'AUTO_REPLIED' OR message_type = 'outbound' OR reply_status = 'SENT')
+          LIMIT 1
+        `).get(...phoneVars, cleanPhone);
+
+        if (priorReply) {
+          console.log(`[Webhook AutoReply] Suppressed: Contact ${cleanPhone} has already received automated reply or active conversation exists (Reply #${priorReply.id}, status: ${priorReply.reply_status}). Mode: ONCE_PER_CONTACT.`);
+          return null;
+        }
+      }
+
+      // Format auto-reply template message
+      let templateMsg = getSetting("AUTO_REPLY_MESSAGE") || 
+        "Hi {{name}}, thank you for reaching out to KonkanTrip! We have received your message. Our team will get back to you shortly.";
+      
+      const customerName = replyRecord.customer_name ? replyRecord.customer_name.trim() : "there";
+      const finalMsg = templateMsg.replace(/\{\{name\}\}/gi, customerName);
+
+      console.log(`[Webhook AutoReply] Sending auto-reply (Mode: ${mode}) to ${cleanPhone} (${customerName}): "${finalMsg}"`);
+
       const sendResult = await sendTextMessage({
         to: cleanPhone,
         body: finalMsg
@@ -742,6 +796,8 @@ class WebhookService {
         db.prepare(`UPDATE customer_replies SET reply_status = 'FAILED' WHERE id = ?`).run(replyRecord.id);
       } catch (e) {}
       return { success: false, error: err.message };
+    } finally {
+      this.inFlightAutoReplies.delete(cleanPhone);
     }
   }
 
@@ -793,6 +849,7 @@ class WebhookService {
   getAutoReplySettings() {
     return {
       enabled: getSetting("AUTO_REPLY_ENABLED") === "true",
+      mode: getSetting("AUTO_REPLY_MODE") || "ONCE_PER_CONTACT",
       message: getSetting("AUTO_REPLY_MESSAGE") || "Hi {{name}}, thank you for reaching out to KonkanTrip! We have received your message and our team will get back to you shortly."
     };
   }
@@ -800,9 +857,14 @@ class WebhookService {
   /**
    * Updates auto-reply settings
    */
-  saveAutoReplySettings({ enabled, message }) {
-    const isEnabled = enabled === true || enabled === "true";
-    setSetting("AUTO_REPLY_ENABLED", isEnabled ? "true" : "false");
+  saveAutoReplySettings({ enabled, mode, message }) {
+    if (enabled !== undefined) {
+      const isEnabled = enabled === true || enabled === "true";
+      setSetting("AUTO_REPLY_ENABLED", isEnabled ? "true" : "false");
+    }
+    if (mode && (mode === "ONCE_PER_CONTACT" || mode === "ONCE_PER_24_HOURS")) {
+      setSetting("AUTO_REPLY_MODE", mode);
+    }
     if (message && String(message).trim()) {
       setSetting("AUTO_REPLY_MESSAGE", String(message).trim());
     }

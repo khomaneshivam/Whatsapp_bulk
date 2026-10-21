@@ -412,6 +412,9 @@ function initializeDatabase() {
   if (!getSetting.get("AUTO_REPLY_ENABLED")) {
     setSetting.run("AUTO_REPLY_ENABLED", "true");
   }
+  if (!getSetting.get("AUTO_REPLY_MODE")) {
+    setSetting.run("AUTO_REPLY_MODE", "ONCE_PER_CONTACT");
+  }
   if (!getSetting.get("AUTO_REPLY_MESSAGE")) {
     setSetting.run(
       "AUTO_REPLY_MESSAGE",

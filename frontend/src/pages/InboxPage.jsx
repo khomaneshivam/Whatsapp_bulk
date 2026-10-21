@@ -21,7 +21,11 @@ import {
   Maximize2,
   ImageOff,
   ZoomIn,
-  ZoomOut
+  ZoomOut,
+  Bot,
+  CheckCircle2,
+  Clock,
+  Settings2
 } from 'lucide-react';
 import { formatIndianTime } from '../utils/indianTime';
 
@@ -314,14 +318,71 @@ export default function InboxPage() {
     }
   }
 
+  // Auto-Reply Bot configuration modal state
+  const [showAutoReplyModal, setShowAutoReplyModal] = useState(false);
+  const [autoReplySettings, setAutoReplySettings] = useState({
+    enabled: true,
+    mode: 'ONCE_PER_CONTACT',
+    message: ''
+  });
+  const [loadingAutoReply, setLoadingAutoReply] = useState(false);
+  const [savingAutoReply, setSavingAutoReply] = useState(false);
+  const [autoReplySaveSuccess, setAutoReplySaveSuccess] = useState(false);
+
   useEffect(() => {
     loadInbox(false);
+    loadAutoReplySettings();
     // Background auto-refresh polling every 8 seconds
     const interval = setInterval(() => {
       loadInbox(true);
     }, 8000);
     return () => clearInterval(interval);
   }, [token]);
+
+  async function loadAutoReplySettings() {
+    try {
+      setLoadingAutoReply(true);
+      const res = await fetch('/api/replies/auto-reply-settings', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (data.success && data.data) {
+        setAutoReplySettings(data.data);
+      }
+    } catch (err) {
+      console.error('Failed to load auto-reply settings:', err);
+    } finally {
+      setLoadingAutoReply(false);
+    }
+  }
+
+  async function handleSaveAutoReplySettings(e) {
+    if (e) e.preventDefault();
+    try {
+      setSavingAutoReply(true);
+      setAutoReplySaveSuccess(false);
+      const res = await fetch('/api/replies/auto-reply-settings', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify(autoReplySettings)
+      });
+      const data = await res.json();
+      if (data.success) {
+        setAutoReplySettings(data.data);
+        setAutoReplySaveSuccess(true);
+        setTimeout(() => setAutoReplySaveSuccess(false), 2500);
+      } else {
+        alert(data.message || 'Failed to save auto-reply settings');
+      }
+    } catch (err) {
+      alert(err.message || 'Error saving auto-reply settings');
+    } finally {
+      setSavingAutoReply(false);
+    }
+  }
 
   // Auto-scroll to bottom of chat when active conversation changes or new messages arrive
   useEffect(() => {
@@ -736,6 +797,53 @@ export default function InboxPage() {
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          {/* Auto-Reply Bot Settings Trigger Button */}
+          <button
+            type="button"
+            onClick={() => {
+              loadAutoReplySettings();
+              setShowAutoReplyModal(true);
+            }}
+            className="btn btn-secondary"
+            style={{
+              gap: '8px',
+              fontSize: '0.825rem',
+              border: autoReplySettings.enabled ? '1px solid #86EFAC' : '1px solid #CBD5E1',
+              background: autoReplySettings.enabled ? '#F0FDF4' : '#FFFFFF',
+              color: autoReplySettings.enabled ? '#15803D' : '#475569',
+              fontWeight: 600,
+              boxShadow: 'var(--shadow-xs)'
+            }}
+            title="Configure Automated Message Settings"
+          >
+            <Sparkles size={14} color={autoReplySettings.enabled ? '#16A34A' : '#94A3B8'} />
+            <span>Auto-Reply Bot</span>
+            {autoReplySettings.enabled ? (
+              <span style={{
+                fontSize: '0.68rem',
+                background: '#DCFCE7',
+                color: '#15803D',
+                padding: '1px 7px',
+                borderRadius: '10px',
+                border: '1px solid #BBF7D0',
+                fontWeight: 700
+              }}>
+                {autoReplySettings.mode === 'ONCE_PER_24_HOURS' ? '24h Window' : 'Once Only'}
+              </span>
+            ) : (
+              <span style={{
+                fontSize: '0.68rem',
+                background: '#F1F5F9',
+                color: '#64748B',
+                padding: '1px 7px',
+                borderRadius: '10px',
+                fontWeight: 600
+              }}>
+                Off
+              </span>
+            )}
+          </button>
+
           <button 
             type="button"
             onClick={() => loadInbox(false)} 
@@ -1595,6 +1703,345 @@ export default function InboxPage() {
                 {lightboxMedia.caption}
               </div>
             )}
+          </div>
+        </div>
+      )}
+      {/* Auto-Reply Bot Configuration Modal */}
+      {showAutoReplyModal && (
+        <div 
+          onClick={() => setShowAutoReplyModal(false)}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(15, 23, 42, 0.65)',
+            backdropFilter: 'blur(4px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1050,
+            padding: '20px'
+          }}
+        >
+          <div 
+            onClick={e => e.stopPropagation()}
+            style={{
+              background: '#FFFFFF',
+              borderRadius: '16px',
+              maxWidth: '560px',
+              width: '100%',
+              maxHeight: '90vh',
+              overflowY: 'auto',
+              boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+              border: '1px solid #E2E8F0',
+              display: 'flex',
+              flexDirection: 'column'
+            }}
+          >
+            {/* Modal Header */}
+            <div style={{
+              padding: '18px 22px',
+              borderBottom: '1px solid #E2E8F0',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              background: '#F8FAFC',
+              borderTopLeftRadius: '16px',
+              borderTopRightRadius: '16px'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <div style={{
+                  width: '36px',
+                  height: '36px',
+                  borderRadius: '10px',
+                  background: '#DCFCE7',
+                  color: '#15803D',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center'
+                }}>
+                  <Sparkles size={18} />
+                </div>
+                <div>
+                  <h3 style={{ fontSize: '1.05rem', fontWeight: 800, color: '#0F172A', margin: 0 }}>
+                    Automated Message Settings
+                  </h3>
+                  <p style={{ fontSize: '0.78rem', color: '#64748B', margin: '2px 0 0 0' }}>
+                    Control automated greeting replies for incoming WhatsApp customer messages
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAutoReplyModal(false)}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: '#94A3B8',
+                  cursor: 'pointer',
+                  padding: '4px',
+                  borderRadius: '6px'
+                }}
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Modal Body / Form */}
+            <form onSubmit={handleSaveAutoReplySettings} style={{ padding: '22px', display: 'flex', flexDirection: 'column', gap: '18px' }}>
+              {/* 1. Master Toggle */}
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                padding: '14px 16px',
+                borderRadius: '12px',
+                background: autoReplySettings.enabled ? '#F0FDF4' : '#F8FAFC',
+                border: `1.5px solid ${autoReplySettings.enabled ? '#BBF7D0' : '#E2E8F0'}`
+              }}>
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: '0.9rem', color: '#0F172A', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span>Enable Auto-Reply Bot</span>
+                    {autoReplySettings.enabled && (
+                      <span style={{ fontSize: '0.7rem', color: '#15803D', background: '#DCFCE7', padding: '1px 8px', borderRadius: '10px', fontWeight: 700 }}>
+                        Active
+                      </span>
+                    )}
+                  </div>
+                  <div style={{ fontSize: '0.78rem', color: '#64748B', marginTop: '2px' }}>
+                    Automatically reply to incoming customer messages via WhatsApp Cloud API
+                  </div>
+                </div>
+
+                <label style={{ position: 'relative', display: 'inline-block', width: '44px', height: '24px', cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={autoReplySettings.enabled}
+                    onChange={e => setAutoReplySettings({ ...autoReplySettings, enabled: e.target.checked })}
+                    style={{ opacity: 0, width: 0, height: 0 }}
+                  />
+                  <span style={{
+                    position: 'absolute',
+                    cursor: 'pointer',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    backgroundColor: autoReplySettings.enabled ? '#16A34A' : '#CBD5E1',
+                    transition: '0.2s',
+                    borderRadius: '24px'
+                  }}>
+                    <span style={{
+                      position: 'absolute',
+                      height: '18px',
+                      width: '18px',
+                      left: autoReplySettings.enabled ? '23px' : '3px',
+                      bottom: '3px',
+                      backgroundColor: 'white',
+                      transition: '0.2s',
+                      borderRadius: '50%',
+                      boxShadow: '0 1px 3px rgba(0,0,0,0.3)'
+                    }} />
+                  </span>
+                </label>
+              </div>
+
+              {/* 2. Message Frequency Selection (Only Once vs 24 Hours) */}
+              <div>
+                <label style={{ display: 'block', fontSize: '0.825rem', fontWeight: 700, color: '#334155', marginBottom: '6px' }}>
+                  Auto-Reply Frequency (Deduplication)
+                </label>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '10px' }}>
+                  {/* Option A: ONCE_PER_CONTACT (Recommended) */}
+                  <div
+                    onClick={() => setAutoReplySettings({ ...autoReplySettings, mode: 'ONCE_PER_CONTACT' })}
+                    style={{
+                      border: autoReplySettings.mode === 'ONCE_PER_CONTACT' ? '2px solid #16A34A' : '1px solid #E2E8F0',
+                      background: autoReplySettings.mode === 'ONCE_PER_CONTACT' ? '#F0FDF4' : '#FFFFFF',
+                      borderRadius: '10px',
+                      padding: '12px 14px',
+                      cursor: 'pointer',
+                      transition: 'all 0.15s ease'
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <input
+                          type="radio"
+                          name="autoReplyMode"
+                          checked={autoReplySettings.mode === 'ONCE_PER_CONTACT'}
+                          onChange={() => setAutoReplySettings({ ...autoReplySettings, mode: 'ONCE_PER_CONTACT' })}
+                          style={{ accentColor: '#16A34A' }}
+                        />
+                        <span style={{ fontWeight: 700, fontSize: '0.875rem', color: '#0F172A' }}>
+                          Send Only Once Ever per Contact
+                        </span>
+                      </div>
+                      <span style={{
+                        fontSize: '0.675rem',
+                        fontWeight: 700,
+                        background: '#DCFCE7',
+                        color: '#15803D',
+                        padding: '2px 8px',
+                        borderRadius: '6px',
+                        border: '1px solid #BBF7D0'
+                      }}>
+                        RECOMMENDED
+                      </span>
+                    </div>
+                    <p style={{ fontSize: '0.78rem', color: '#64748B', margin: '0 0 0 24px', lineHeight: 1.4 }}>
+                      Sends the automated message <strong>strictly once</strong> when a new contact reaches out for the first time. Will <strong>never repeat</strong> on subsequent messages from that customer.
+                    </p>
+                  </div>
+
+                  {/* Option B: ONCE_PER_24_HOURS */}
+                  <div
+                    onClick={() => setAutoReplySettings({ ...autoReplySettings, mode: 'ONCE_PER_24_HOURS' })}
+                    style={{
+                      border: autoReplySettings.mode === 'ONCE_PER_24_HOURS' ? '2px solid #16A34A' : '1px solid #E2E8F0',
+                      background: autoReplySettings.mode === 'ONCE_PER_24_HOURS' ? '#F0FDF4' : '#FFFFFF',
+                      borderRadius: '10px',
+                      padding: '12px 14px',
+                      cursor: 'pointer',
+                      transition: 'all 0.15s ease'
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                      <input
+                        type="radio"
+                        name="autoReplyMode"
+                        checked={autoReplySettings.mode === 'ONCE_PER_24_HOURS'}
+                        onChange={() => setAutoReplySettings({ ...autoReplySettings, mode: 'ONCE_PER_24_HOURS' })}
+                        style={{ accentColor: '#16A34A' }}
+                      />
+                      <span style={{ fontWeight: 700, fontSize: '0.875rem', color: '#0F172A' }}>
+                        At Most Once per 24 Hours
+                      </span>
+                    </div>
+                    <p style={{ fontSize: '0.78rem', color: '#64748B', margin: '0 0 0 24px', lineHeight: 1.4 }}>
+                      Sends at most once every 24 hours. If the customer messages on a different day, they receive an updated greeting.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* 3. Message Template Textarea */}
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '6px' }}>
+                  <label style={{ fontSize: '0.825rem', fontWeight: 700, color: '#334155' }}>
+                    Auto-Reply Message Template
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const cur = autoReplySettings.message || '';
+                      setAutoReplySettings({
+                        ...autoReplySettings,
+                        message: cur + (cur.endsWith(' ') || cur === '' ? '{{name}} ' : ' {{name}} ')
+                      });
+                    }}
+                    style={{
+                      background: '#F1F5F9',
+                      border: '1px solid #E2E8F0',
+                      borderRadius: '6px',
+                      padding: '2px 8px',
+                      fontSize: '0.72rem',
+                      fontWeight: 600,
+                      color: '#475569',
+                      cursor: 'pointer'
+                    }}
+                    title="Insert dynamic customer name variable"
+                  >
+                    + Insert <code>{`{{name}}`}</code>
+                  </button>
+                </div>
+
+                <textarea
+                  rows={3}
+                  className="saas-input"
+                  value={autoReplySettings.message || ''}
+                  onChange={e => setAutoReplySettings({ ...autoReplySettings, message: e.target.value })}
+                  placeholder="Hi {{name}}, thank you for reaching out to KonkanTrip! We have received your message. Our team will get back to you shortly."
+                  style={{ width: '100%', resize: 'vertical', fontSize: '0.85rem', lineHeight: 1.45, padding: '10px 12px' }}
+                />
+                <span style={{ fontSize: '0.72rem', color: '#94A3B8', marginTop: '4px', display: 'block' }}>
+                  <code>{`{{name}}`}</code> will be replaced with the customer's WhatsApp profile name (e.g. &ldquo;Shivam&rdquo;).
+                </span>
+              </div>
+
+              {/* 4. Live WhatsApp Preview Bubble */}
+              <div>
+                <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '6px' }}>
+                  Customer WhatsApp Preview
+                </label>
+                <div style={{
+                  background: '#ECE5DD',
+                  borderRadius: '12px',
+                  padding: '16px',
+                  border: '1px solid #E2E8F0',
+                  display: 'flex',
+                  justifyContent: 'flex-start'
+                }}>
+                  <div style={{
+                    background: '#FFFFFF',
+                    borderRadius: '0 10px 10px 10px',
+                    padding: '10px 14px',
+                    maxWidth: '85%',
+                    boxShadow: '0 1px 2px rgba(0,0,0,0.1)',
+                    position: 'relative'
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.68rem', fontWeight: 700, color: '#16A34A', marginBottom: '4px' }}>
+                      <Sparkles size={11} /> Auto-Reply Bot
+                    </div>
+                    <div style={{ fontSize: '0.85rem', color: '#0F172A', whiteSpace: 'pre-wrap', lineHeight: 1.45 }}>
+                      {(autoReplySettings.message || 'Hi {{name}}, thank you for reaching out to KonkanTrip! We have received your message. Our team will get back to you shortly.').replace(/\{\{name\}\}/gi, 'Shivam')}
+                    </div>
+                    <div style={{ textAlign: 'right', fontSize: '0.675rem', color: '#94A3B8', marginTop: '4px' }}>
+                      10:30 AM
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Save Success Alert */}
+              {autoReplySaveSuccess && (
+                <div style={{
+                  background: '#DCFCE7',
+                  border: '1px solid #BBF7D0',
+                  color: '#15803D',
+                  padding: '10px 14px',
+                  borderRadius: '8px',
+                  fontSize: '0.825rem',
+                  fontWeight: 600,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px'
+                }}>
+                  <CheckCircle2 size={16} />
+                  <span>Auto-reply settings saved successfully! Automated messages will now be sent once only.</span>
+                </div>
+              )}
+
+              {/* Modal Footer Buttons */}
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '8px', borderTop: '1px solid #F1F5F9', paddingTop: '16px' }}>
+                <button
+                  type="button"
+                  onClick={() => setShowAutoReplyModal(false)}
+                  className="btn btn-secondary"
+                  style={{ padding: '8px 16px', fontSize: '0.825rem' }}
+                >
+                  Close
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingAutoReply}
+                  className="btn btn-action-green"
+                  style={{ padding: '8px 18px', fontSize: '0.825rem', gap: '6px' }}
+                >
+                  <CheckCircle2 size={15} />
+                  <span>{savingAutoReply ? 'Saving...' : 'Save Settings'}</span>
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
