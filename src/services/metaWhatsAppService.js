@@ -334,6 +334,121 @@ async function getTemplateDetails(templateIdOrName, customCredentials = null) {
 }
 
 /**
+ * Resolves active WhatsApp Business Account ID (WABA ID) from settings or phone records
+ */
+function resolveWabaId(customWabaId = null) {
+  if (customWabaId && String(customWabaId).trim()) {
+    return String(customWabaId).trim();
+  }
+
+  // 1. Check settings table
+  const settingWaba = getSetting("WHATSAPP_BUSINESS_ACCOUNT_ID") || getSetting("WHATSAPP_WABA_ID");
+  if (settingWaba && String(settingWaba).trim()) {
+    return String(settingWaba).trim();
+  }
+
+  // 2. Check default or registered phone in waba_phone_numbers
+  try {
+    if (db) {
+      const defaultPhone = db.prepare("SELECT waba_id FROM waba_phone_numbers WHERE is_default = 1 AND waba_id IS NOT NULL AND waba_id != ''").get();
+      if (defaultPhone?.waba_id) {
+        return String(defaultPhone.waba_id).trim();
+      }
+
+      const anyPhone = db.prepare("SELECT waba_id FROM waba_phone_numbers WHERE waba_id IS NOT NULL AND waba_id != '' ORDER BY id ASC LIMIT 1").get();
+      if (anyPhone?.waba_id) {
+        return String(anyPhone.waba_id).trim();
+      }
+    }
+  } catch (e) {
+    // Ignore DB error
+  }
+
+  // 3. Fallback to env
+  if (config.WHATSAPP_BUSINESS_ACCOUNT_ID) {
+    return String(config.WHATSAPP_BUSINESS_ACCOUNT_ID).trim();
+  }
+
+  return null;
+}
+
+/**
+ * Clears the in-memory template cache
+ */
+function clearTemplateCache() {
+  templateCache.clear();
+}
+
+/**
+ * Fetch and parse all message templates from Meta Graph API by WABA ID, optionally filtered by category
+ * Supported categories: 'MARKETING', 'UTILITY', 'AUTHENTICATION' (or null / 'ALL' for all categories)
+ */
+async function fetchWabaTemplates({ category = null, status = null, limit = 100, customCredentials = null, wabaId = null } = {}) {
+  const creds = customCredentials || getActiveCredentials();
+  const resolvedWabaId = resolveWabaId(wabaId);
+
+  if (!resolvedWabaId) {
+    const err = new Error("WhatsApp Business Account ID (WABA ID) is not configured. Please specify your WABA ID in Settings or WhatsApp Sender Line to sync templates directly from Meta.");
+    err.statusCode = 400;
+    err.code = "MISSING_WABA_ID";
+    throw err;
+  }
+
+  const fields = "id,name,status,category,language,components,parameter_format,quality_score";
+  const url = new URL(`${META_BASE_URL}/${resolvedWabaId}/message_templates`);
+  url.searchParams.set("fields", fields);
+  url.searchParams.set("limit", String(Math.min(limit || 100, 250)));
+
+  if (category && String(category).trim().toUpperCase() !== "ALL") {
+    url.searchParams.set("category", String(category).trim().toUpperCase());
+  }
+  if (status && String(status).trim().toUpperCase() !== "ALL") {
+    url.searchParams.set("status", String(status).trim().toUpperCase());
+  }
+
+  const res = await fetch(url.toString(), {
+    method: "GET",
+    headers: {
+      "Authorization": `Bearer ${creds.token}`,
+      "Content-Type": "application/json"
+    }
+  });
+
+  const data = await res.json();
+  if (!res.ok) {
+    throw parseMetaError(data, res.status);
+  }
+
+  const rawList = Array.isArray(data.data) ? data.data : [];
+  const parsedTemplates = rawList.map(tpl => {
+    const parsed = parseTemplateVariables(tpl.components, tpl.parameter_format);
+    return {
+      id: tpl.id,
+      name: tpl.name,
+      meta_id: tpl.id,
+      language: tpl.language || "en",
+      category: tpl.category || "MARKETING",
+      status: tpl.status || "APPROVED",
+      parameter_format: tpl.parameter_format || "POSITIONAL",
+      bodyText: parsed.bodyText,
+      variables: parsed.variables,
+      components: tpl.components || [],
+      buttons: parsed.buttons || [],
+      quality_score: tpl.quality_score || null
+    };
+  });
+
+  return {
+    success: true,
+    wabaId: resolvedWabaId,
+    category: category ? category.toUpperCase() : "ALL",
+    count: parsedTemplates.length,
+    templates: parsedTemplates,
+    paging: data.paging || null
+  };
+}
+
+/**
  * Send a pre-approved template message via Meta Cloud API
  */
 async function sendTemplateMessage({ to, templateName, languageCode, components = [], customCredentials = null }) {
@@ -561,6 +676,9 @@ module.exports = {
   testConnection,
   cleanPhone,
   getTemplateDetails,
+  resolveWabaId,
+  fetchWabaTemplates,
+  clearTemplateCache,
   sendTemplateMessage,
   sendTextMessage,
   sendMediaMessage,

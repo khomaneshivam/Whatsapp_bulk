@@ -27,7 +27,11 @@ import {
   Play,
   StopCircle,
   AlertTriangle,
-  Image as ImageIcon
+  Image as ImageIcon,
+  Megaphone,
+  Lock,
+  Tag,
+  ExternalLink
 } from 'lucide-react';
 import { formatIndianDateTime, formatIndianTime, formatIndianDate, getIndianCurrentInputString } from '../utils/indianTime';
 import AddPhoneNumberModal from '../components/AddPhoneNumberModal';
@@ -54,6 +58,15 @@ export default function BroadcastPage() {
   const [uploadingMedia, setUploadingMedia] = useState(false);
   const [mediaUploadSuccess, setMediaUploadSuccess] = useState(false);
   const [mediaSourceTab, setMediaSourceTab] = useState('upload'); // 'upload' | 'default' | 'url'
+
+  // Multi-Template Categories & Meta Sync State
+  const [categoriesSummary, setCategoriesSummary] = useState([]);
+  const [selectedCategory, setSelectedCategory] = useState('ALL');
+  const [syncingMeta, setSyncingMeta] = useState(false);
+  const [syncFeedback, setSyncFeedback] = useState(null);
+  const [showWabaPromptModal, setShowWabaPromptModal] = useState(false);
+  const [wabaModalInput, setWabaModalInput] = useState('');
+  const [savingWaba, setSavingWaba] = useState(false);
 
   // Dispatch Throttle Delay (in milliseconds)
   const [throttleDelay, setThrottleDelay] = useState(250);
@@ -181,6 +194,17 @@ export default function BroadcastPage() {
         if (!selectedTemplate) {
           handleSelectTemplate(list[0]);
         }
+      }
+
+      // Load template categories summary breakdown
+      try {
+        const catRes = await fetch('/api/broadcast/templates/categories', { headers });
+        const catData = await catRes.json();
+        if (catData.categories) {
+          setCategoriesSummary(catData.categories);
+        }
+      } catch (catErr) {
+        console.warn('Failed to load template categories summary:', catErr.message);
       }
 
       // Load registered sender phones
@@ -361,6 +385,96 @@ export default function BroadcastPage() {
       setInspectMessage({ type: 'error', text: `✗ ${err.message}` });
     } finally {
       setInspecting(false);
+    }
+  }
+
+  async function handleSyncMetaTemplates(wabaOverride = null) {
+    setSyncingMeta(true);
+    setSyncFeedback(null);
+    try {
+      const headers = {
+        'Content-Type': 'application/json',
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+      };
+      const bodyPayload = {};
+      if (selectedCategory && selectedCategory !== 'ALL') {
+        bodyPayload.category = selectedCategory;
+      }
+      if (wabaOverride && String(wabaOverride).trim()) {
+        bodyPayload.wabaId = String(wabaOverride).trim();
+      }
+
+      const res = await fetch('/api/broadcast/templates/sync', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(bodyPayload)
+      });
+      const data = await res.json();
+
+      if (!res.ok || !data.success) {
+        if (data.code === 'MISSING_WABA_ID') {
+          setShowWabaPromptModal(true);
+          return;
+        }
+        throw new Error(data.message || 'Failed to sync templates from Meta');
+      }
+
+      if (Array.isArray(data.templates) && data.templates.length > 0) {
+        setTemplates(data.templates);
+        if (!selectedTemplate || !data.templates.some(t => t.name === selectedTemplate.name)) {
+          handleSelectTemplate(data.templates[0]);
+        }
+      }
+
+      // Reload category breakdown
+      try {
+        const catRes = await fetch('/api/broadcast/templates/categories', { headers });
+        const catData = await catRes.json();
+        if (catData.categories) setCategoriesSummary(catData.categories);
+      } catch (e) {}
+
+      setSyncFeedback({
+        type: 'success',
+        text: data.message || `✓ Synced ${data.syncedCount || 0} templates successfully from Meta.`
+      });
+      setTimeout(() => setSyncFeedback(null), 6000);
+    } catch (err) {
+      setSyncFeedback({
+        type: 'error',
+        text: `✗ ${err.message}`
+      });
+    } finally {
+      setSyncingMeta(false);
+    }
+  }
+
+  async function handleSaveWabaAndSync(e) {
+    if (e) e.preventDefault();
+    const cleanWaba = wabaModalInput.trim();
+    if (!cleanWaba) return;
+
+    setSavingWaba(true);
+    try {
+      const headers = {
+        'Content-Type': 'application/json',
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+      };
+      await fetch('/api/settings', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          WHATSAPP_BUSINESS_ACCOUNT_ID: cleanWaba,
+          WHATSAPP_WABA_ID: cleanWaba
+        })
+      });
+
+      setShowWabaPromptModal(false);
+      setWabaModalInput('');
+      await handleSyncMetaTemplates(cleanWaba);
+    } catch (err) {
+      alert('Failed to save WABA ID: ' + err.message);
+    } finally {
+      setSavingWaba(false);
     }
   }
 
@@ -1311,39 +1425,140 @@ export default function BroadcastPage() {
           {/* STEP 2: Template Selection & Variable Mapping */}
           {currentStep === 2 && (
             <div className="saas-card" style={{ padding: '24px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px', flexWrap: 'wrap', gap: '8px' }}>
-                <h2 style={{ fontSize: '1.1rem', fontWeight: 700, color: '#0F172A', display: 'flex', alignItems: 'center', gap: '8px', margin: 0 }}>
-                  <Layers size={18} color="var(--brand-wa)" /> Select Official Meta Template
-                </h2>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <span className="badge badge-success">
-                    {templates.length} Approved Templates
-                  </span>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '18px', flexWrap: 'wrap', gap: '10px' }}>
+                <div>
+                  <h2 style={{ fontSize: '1.15rem', fontWeight: 700, color: '#0F172A', display: 'flex', alignItems: 'center', gap: '8px', margin: 0 }}>
+                    <Layers size={19} color="var(--brand-wa)" /> Select Official Meta Template
+                  </h2>
+                  <p style={{ fontSize: '0.8rem', color: '#64748B', margin: '4px 0 0 0' }}>
+                    Choose pre-approved WhatsApp templates categorized by Marketing, Utility, and Authentication.
+                  </p>
+                </div>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                  <button
+                    type="button"
+                    onClick={() => handleSyncMetaTemplates()}
+                    disabled={syncingMeta}
+                    className="btn btn-action-green"
+                    style={{ padding: '6px 14px', fontSize: '0.78rem', gap: '6px' }}
+                    title="Fetch and synchronize approved templates directly from Meta WhatsApp Cloud API"
+                  >
+                    <RefreshCw size={13} className={syncingMeta ? 'pulse-glow spin' : ''} />
+                    <span>{syncingMeta ? 'Syncing from Meta...' : 'Sync from Meta'}</span>
+                  </button>
+
                   <button
                     type="button"
                     onClick={loadData}
                     className="btn btn-secondary"
-                    style={{ padding: '5px 10px', fontSize: '0.75rem', gap: '4px' }}
-                    title="Refresh templates from database"
+                    style={{ padding: '6px 12px', fontSize: '0.78rem', gap: '4px' }}
+                    title="Reload templates from database"
                   >
-                    <RefreshCw size={12} />
+                    <RefreshCw size={13} />
                     <span>Refresh</span>
                   </button>
                 </div>
               </div>
 
+              {/* Multi-Template Category Tabs Bar */}
+              {(() => {
+                const totalCount = templates.length;
+                const mktCount = templates.filter(t => (t.category || 'MARKETING').toUpperCase() === 'MARKETING').length;
+                const utlCount = templates.filter(t => (t.category || '').toUpperCase() === 'UTILITY').length;
+                const authCount = templates.filter(t => (t.category || '').toUpperCase() === 'AUTHENTICATION').length;
+
+                const tabs = [
+                  { key: 'ALL', label: 'All Templates', count: totalCount, icon: Layers, activeColor: '#0F172A', activeBg: '#F1F5F9', activeBorder: '#CBD5E1' },
+                  { key: 'MARKETING', label: 'Marketing', count: mktCount, icon: Megaphone, activeColor: '#7C3AED', activeBg: '#F3E8FF', activeBorder: '#E9D5FF' },
+                  { key: 'UTILITY', label: 'Utility', count: utlCount, icon: Zap, activeColor: '#16A34A', activeBg: '#DCFCE7', activeBorder: '#BBF7D0' },
+                  { key: 'AUTHENTICATION', label: 'Authentication', count: authCount, icon: Lock, activeColor: '#D97706', activeBg: '#FEF3C7', activeBorder: '#FDE68A' }
+                ];
+
+                return (
+                  <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    marginBottom: '16px',
+                    overflowX: 'auto',
+                    paddingBottom: '4px'
+                  }}>
+                    {tabs.map(tab => {
+                      const isSel = selectedCategory === tab.key;
+                      const IconComp = tab.icon;
+                      return (
+                        <button
+                          key={tab.key}
+                          type="button"
+                          onClick={() => setSelectedCategory(tab.key)}
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '7px',
+                            padding: '8px 14px',
+                            borderRadius: '8px',
+                            border: isSel ? `1.5px solid ${tab.activeColor}` : '1px solid var(--border-color)',
+                            background: isSel ? tab.activeBg : '#FFFFFF',
+                            color: isSel ? tab.activeColor : '#64748B',
+                            fontWeight: isSel ? 700 : 600,
+                            fontSize: '0.825rem',
+                            cursor: 'pointer',
+                            whiteSpace: 'nowrap',
+                            transition: 'all 0.15s ease',
+                            boxShadow: isSel ? '0 1px 3px rgba(0,0,0,0.06)' : 'none'
+                          }}
+                        >
+                          <IconComp size={15} color={isSel ? tab.activeColor : '#94A3B8'} />
+                          <span>{tab.label}</span>
+                          <span style={{
+                            fontSize: '0.72rem',
+                            fontWeight: 700,
+                            padding: '1px 7px',
+                            borderRadius: '999px',
+                            background: isSel ? '#FFFFFF' : '#F1F5F9',
+                            color: isSel ? tab.activeColor : '#64748B',
+                            border: `1px solid ${isSel ? tab.activeBorder : '#E2E8F0'}`
+                          }}>
+                            {tab.count}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
+
               {/* Template Search & Live Meta Inspector */}
               <div style={{ display: 'flex', gap: '10px', marginBottom: '14px', flexWrap: 'wrap' }}>
-                <div style={{ position: 'relative', flex: 1, minWidth: '220px' }}>
+                <div style={{ position: 'relative', flex: 1, minWidth: '240px' }}>
                   <Search size={14} style={{ position: 'absolute', left: '10px', top: '12px', color: '#94A3B8' }} />
                   <input
                     type="text"
-                    placeholder="Filter templates by name or category..."
+                    placeholder={`Filter ${selectedCategory === 'ALL' ? 'all' : selectedCategory.toLowerCase()} templates by name or text...`}
                     className="saas-input"
-                    style={{ paddingLeft: '32px' }}
+                    style={{ paddingLeft: '32px', paddingRight: templateSearch ? '28px' : '10px' }}
                     value={templateSearch}
                     onChange={e => setTemplateSearch(e.target.value)}
                   />
+                  {templateSearch && (
+                    <button
+                      type="button"
+                      onClick={() => setTemplateSearch('')}
+                      style={{
+                        position: 'absolute',
+                        right: '8px',
+                        top: '10px',
+                        background: 'none',
+                        border: 'none',
+                        cursor: 'pointer',
+                        color: '#94A3B8',
+                        padding: '2px'
+                      }}
+                    >
+                      <X size={14} />
+                    </button>
+                  )}
                 </div>
 
                 <div style={{ display: 'flex', gap: '6px', flex: 1.2, minWidth: '280px' }}>
@@ -1368,6 +1583,35 @@ export default function BroadcastPage() {
                 </div>
               </div>
 
+              {/* Sync and Inspect Feedback Banners */}
+              {syncFeedback && (
+                <div style={{
+                  padding: '9px 14px',
+                  borderRadius: '8px',
+                  marginBottom: '14px',
+                  fontSize: '0.8rem',
+                  fontWeight: 600,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  background: syncFeedback.type === 'success' ? '#DCFCE7' : '#FEE2E2',
+                  color: syncFeedback.type === 'success' ? '#15803D' : '#DC2626',
+                  border: `1px solid ${syncFeedback.type === 'success' ? '#BBF7D0' : '#FECACA'}`
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    {syncFeedback.type === 'success' ? <CheckCircle2 size={16} /> : <AlertTriangle size={16} />}
+                    <span>{syncFeedback.text}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setSyncFeedback(null)}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'inherit' }}
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+              )}
+
               {inspectMessage && (
                 <div style={{
                   padding: '8px 12px',
@@ -1384,57 +1628,190 @@ export default function BroadcastPage() {
               )}
 
               {/* Template Picker Grid */}
-              <div style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))',
-                gap: '12px',
-                maxHeight: '260px',
-                overflowY: 'auto',
-                padding: '4px',
-                marginBottom: '16px'
-              }}>
-                {templates
-                  .filter(tmpl => {
-                    if (!templateSearch.trim()) return true;
-                    const q = templateSearch.toLowerCase();
-                    return (
-                      tmpl.name?.toLowerCase().includes(q) ||
-                      tmpl.category?.toLowerCase().includes(q) ||
-                      tmpl.meta_id?.toString().includes(q)
-                    );
-                  })
-                  .map(tmpl => {
-                    const isSelected = selectedTemplate?.name === tmpl.name;
-                    return (
-                      <div
-                        key={tmpl.name}
-                        onClick={() => handleSelectTemplate(tmpl)}
-                        style={{
-                          padding: '12px 14px',
-                          borderRadius: '8px',
-                          border: '1px solid',
-                          borderColor: isSelected ? 'var(--brand-wa)' : 'var(--border-color)',
-                          background: isSelected ? '#F0FDF4' : '#FFFFFF',
-                          cursor: 'pointer',
-                          transition: 'all 0.15s ease',
-                          boxShadow: isSelected ? '0 0 0 2px rgba(18, 140, 126, 0.2)' : 'var(--shadow-xs)'
-                        }}
-                      >
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' }}>
-                          <span style={{ fontWeight: 700, fontSize: '0.85rem', color: isSelected ? '#0d7064' : '#0F172A' }}>
-                            {tmpl.name}
-                          </span>
-                          <span className="badge badge-neutral" style={{ fontSize: '0.65rem' }}>
-                            {tmpl.language || 'en'}
-                          </span>
-                        </div>
-                        <div style={{ fontSize: '0.72rem', color: '#64748B' }}>
-                          Category: {tmpl.category || 'MARKETING'} • Status: {tmpl.status || 'APPROVED'}
-                        </div>
+              {(() => {
+                const filtered = templates.filter(tmpl => {
+                  // Category Filter
+                  if (selectedCategory !== 'ALL') {
+                    const cat = (tmpl.category || 'MARKETING').toUpperCase();
+                    if (cat !== selectedCategory) return false;
+                  }
+                  // Search query filter
+                  if (templateSearch.trim()) {
+                    const q = templateSearch.toLowerCase().trim();
+                    const matchName = tmpl.name?.toLowerCase().includes(q);
+                    const matchCat = tmpl.category?.toLowerCase().includes(q);
+                    const matchId = String(tmpl.meta_id || tmpl.id || '').toLowerCase().includes(q);
+                    const matchBody = String(tmpl.bodyText || tmpl.body_text || '').toLowerCase().includes(q);
+                    if (!matchName && !matchCat && !matchId && !matchBody) return false;
+                  }
+                  return true;
+                });
+
+                if (filtered.length === 0) {
+                  return (
+                    <div style={{
+                      padding: '36px 20px',
+                      textAlign: 'center',
+                      background: '#F8FAFC',
+                      border: '1px dashed #CBD5E1',
+                      borderRadius: '10px',
+                      marginBottom: '16px'
+                    }}>
+                      <Layers size={32} color="#94A3B8" style={{ margin: '0 auto 8px auto' }} />
+                      <div style={{ fontSize: '0.925rem', fontWeight: 700, color: '#334155' }}>
+                        No {selectedCategory === 'ALL' ? '' : selectedCategory.toLowerCase()} templates found
                       </div>
-                    );
-                  })}
-              </div>
+                      <div style={{ fontSize: '0.78rem', color: '#64748B', maxWidth: '380px', margin: '4px auto 14px auto' }}>
+                        {templateSearch ? `No templates matched "${templateSearch}".` : `There are no approved templates saved in the ${selectedCategory} category yet.`}
+                      </div>
+                      <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
+                        <button
+                          type="button"
+                          onClick={() => handleSyncMetaTemplates()}
+                          disabled={syncingMeta}
+                          className="btn btn-action-green"
+                          style={{ fontSize: '0.78rem', padding: '6px 14px' }}
+                        >
+                          <RefreshCw size={13} className={syncingMeta ? 'pulse-glow spin' : ''} />
+                          <span>Sync {selectedCategory === 'ALL' ? 'All' : selectedCategory} from Meta</span>
+                        </button>
+                        {selectedCategory !== 'ALL' && (
+                          <button
+                            type="button"
+                            onClick={() => { setSelectedCategory('ALL'); setTemplateSearch(''); }}
+                            className="btn btn-secondary"
+                            style={{ fontSize: '0.78rem', padding: '6px 14px' }}
+                          >
+                            <span>View All Templates</span>
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                }
+
+                return (
+                  <div style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
+                    gap: '12px',
+                    maxHeight: '320px',
+                    overflowY: 'auto',
+                    padding: '4px',
+                    marginBottom: '16px'
+                  }}>
+                    {filtered.map(tmpl => {
+                      const isSelected = selectedTemplate?.name === tmpl.name;
+                      const catUpper = (tmpl.category || 'MARKETING').toUpperCase();
+                      const varCount = Array.isArray(tmpl.variables) ? tmpl.variables.length : 0;
+
+                      // Category specific colors
+                      const catStyle = catUpper === 'UTILITY'
+                        ? { bg: '#DCFCE7', color: '#15803D', border: '#BBF7D0', label: '⚡ Utility' }
+                        : catUpper === 'AUTHENTICATION'
+                          ? { bg: '#FEF3C7', color: '#92400E', border: '#FDE68A', label: '🔐 Auth' }
+                          : { bg: '#F3E8FF', color: '#6B21A8', border: '#E9D5FF', label: '📢 Marketing' };
+
+                      return (
+                        <div
+                          key={tmpl.name}
+                          onClick={() => handleSelectTemplate(tmpl)}
+                          style={{
+                            padding: '14px',
+                            borderRadius: '10px',
+                            border: isSelected ? '2px solid var(--brand-wa)' : '1px solid var(--border-color)',
+                            background: isSelected ? '#F0FDF4' : '#FFFFFF',
+                            cursor: 'pointer',
+                            transition: 'all 0.15s ease',
+                            boxShadow: isSelected ? '0 0 0 2px rgba(18, 140, 126, 0.18)' : 'var(--shadow-xs)',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            justifyContent: 'space-between'
+                          }}
+                        >
+                          <div>
+                            {/* Card Top: Name & Language */}
+                            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '8px', gap: '6px' }}>
+                              <span style={{
+                                fontWeight: 700,
+                                fontSize: '0.875rem',
+                                color: isSelected ? '#0d7064' : '#0F172A',
+                                wordBreak: 'break-word',
+                                lineHeight: 1.3
+                              }}>
+                                {tmpl.name}
+                              </span>
+                              <span className="badge badge-neutral" style={{ fontSize: '0.65rem', padding: '1px 6px', flexShrink: 0 }}>
+                                {tmpl.language || 'en'}
+                              </span>
+                            </div>
+
+                            {/* Card Middle Badges: Category, Status, Variables */}
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', marginBottom: '8px' }}>
+                              {/* Category Badge */}
+                              <span style={{
+                                fontSize: '0.65rem',
+                                fontWeight: 700,
+                                padding: '2px 7px',
+                                borderRadius: '4px',
+                                background: catStyle.bg,
+                                color: catStyle.color,
+                                border: `1px solid ${catStyle.border}`
+                              }}>
+                                {catStyle.label}
+                              </span>
+
+                              {/* Status Badge */}
+                              <span style={{
+                                fontSize: '0.65rem',
+                                fontWeight: 600,
+                                padding: '2px 6px',
+                                borderRadius: '4px',
+                                background: tmpl.status === 'APPROVED' ? '#DCFCE7' : '#FEF3C7',
+                                color: tmpl.status === 'APPROVED' ? '#15803D' : '#B45309'
+                              }}>
+                                {tmpl.status || 'APPROVED'}
+                              </span>
+
+                              {/* Variable Count */}
+                              <span style={{
+                                fontSize: '0.65rem',
+                                color: '#64748B',
+                                background: '#F1F5F9',
+                                padding: '2px 6px',
+                                borderRadius: '4px',
+                                fontWeight: 600
+                              }}>
+                                {varCount > 0 ? `${varCount} vars` : 'No vars'}
+                              </span>
+                            </div>
+
+                            {/* Body snippet */}
+                            {tmpl.bodyText && (
+                              <div style={{
+                                fontSize: '0.73rem',
+                                color: '#475569',
+                                lineHeight: 1.35,
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                display: '-webkit-box',
+                                WebkitLineClamp: 2,
+                                WebkitBoxOrient: 'vertical',
+                                background: isSelected ? '#FFFFFF' : '#F8FAFC',
+                                padding: '6px 8px',
+                                borderRadius: '6px',
+                                border: '1px solid #E2E8F0'
+                              }}>
+                                {tmpl.bodyText}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
 
               {/* Selected Template Details Card */}
               {selectedTemplate && (
@@ -2257,6 +2634,104 @@ export default function BroadcastPage() {
         onClose={() => setShowAddPhoneModal(false)}
         onPhoneAdded={handlePhoneAdded}
       />
+
+      {/* WABA ID Prompt Modal for Syncing Templates */}
+      {showWabaPromptModal && (
+        <div style={{
+          position: 'fixed',
+          inset: 0,
+          background: 'rgba(15, 23, 42, 0.6)',
+          backdropFilter: 'blur(6px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1000,
+          padding: '20px'
+        }}>
+          <div style={{
+            background: '#FFFFFF',
+            borderRadius: '16px',
+            maxWidth: '520px',
+            width: '100%',
+            padding: '24px',
+            boxShadow: 'var(--shadow-xl)',
+            border: '1px solid var(--border-color)'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <div style={{
+                  width: '36px',
+                  height: '36px',
+                  borderRadius: '10px',
+                  background: '#F0FDF4',
+                  color: 'var(--brand-wa)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center'
+                }}>
+                  <RefreshCw size={18} />
+                </div>
+                <div>
+                  <h3 style={{ fontSize: '1.05rem', fontWeight: 800, color: '#0F172A', margin: 0 }}>
+                    Enter WhatsApp Business Account ID
+                  </h3>
+                  <div style={{ fontSize: '0.75rem', color: '#64748B' }}>
+                    Required by Meta to fetch message templates
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowWabaPromptModal(false)}
+                style={{ background: 'none', border: 'none', color: '#64748B', cursor: 'pointer' }}
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <p style={{ fontSize: '0.8rem', color: '#475569', lineHeight: 1.45, marginBottom: '16px' }}>
+              To sync all approved templates from Meta directly into your workspace, please enter your <strong>WABA ID</strong> (WhatsApp Business Account ID). You can find this in your <a href="https://developers.facebook.com/apps/" target="_blank" rel="noreferrer" style={{ color: 'var(--brand-wa)', fontWeight: 600 }}>Meta App Dashboard</a> under <em>WhatsApp &gt; API Setup</em>.
+            </p>
+
+            <form onSubmit={handleSaveWabaAndSync}>
+              <div style={{ marginBottom: '18px' }}>
+                <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: 600, color: '#334155', marginBottom: '6px' }}>
+                  WhatsApp Business Account ID (WABA ID) <span style={{ color: 'var(--error)' }}>*</span>
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. 104829375820491"
+                  className="saas-input"
+                  required
+                  value={wabaModalInput}
+                  onChange={e => setWabaModalInput(e.target.value)}
+                  autoFocus
+                />
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+                <button
+                  type="button"
+                  onClick={() => setShowWabaPromptModal(false)}
+                  className="btn btn-secondary"
+                  disabled={savingWaba}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingWaba || !wabaModalInput.trim()}
+                  className="btn btn-action-green"
+                  style={{ gap: '6px' }}
+                >
+                  <RefreshCw size={14} className={savingWaba ? 'pulse-glow spin' : ''} />
+                  <span>{savingWaba ? 'Saving & Syncing...' : 'Save & Sync Templates'}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

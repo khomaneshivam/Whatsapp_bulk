@@ -26,6 +26,8 @@ async function updateSettings(req, res) {
     const {
       WHATSAPP_API_TOKEN,
       WHATSAPP_PHONE_NUMBER_ID,
+      WHATSAPP_BUSINESS_ACCOUNT_ID,
+      WHATSAPP_WABA_ID,
       DEFAULT_COUNTRY_CODE,
       BROADCAST_DELAY_MS,
       WHATSAPP_TEMPLATE_ID,
@@ -39,6 +41,12 @@ async function updateSettings(req, res) {
     }
     if (WHATSAPP_PHONE_NUMBER_ID !== undefined) {
       setSetting("WHATSAPP_PHONE_NUMBER_ID", WHATSAPP_PHONE_NUMBER_ID.trim());
+    }
+    if (WHATSAPP_BUSINESS_ACCOUNT_ID !== undefined) {
+      setSetting("WHATSAPP_BUSINESS_ACCOUNT_ID", WHATSAPP_BUSINESS_ACCOUNT_ID.trim());
+    }
+    if (WHATSAPP_WABA_ID !== undefined) {
+      setSetting("WHATSAPP_WABA_ID", WHATSAPP_WABA_ID.trim());
     }
     if (DEFAULT_COUNTRY_CODE !== undefined) {
       setSetting("DEFAULT_COUNTRY_CODE", DEFAULT_COUNTRY_CODE.trim());

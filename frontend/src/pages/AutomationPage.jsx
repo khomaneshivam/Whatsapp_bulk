@@ -876,9 +876,20 @@ export default function AutomationPage() {
                           onChange={e => handleStageTemplateChange(st.key, e.target.value)}
                         >
                           <option value="">-- Select Approved Template --</option>
-                          {templates.map(tmpl => (
-                            <option key={tmpl.name} value={tmpl.name}>{tmpl.name} ({tmpl.language || 'en'})</option>
-                          ))}
+                          {['UTILITY', 'MARKETING', 'AUTHENTICATION'].map(cat => {
+                            const catTemplates = templates.filter(t => (t.category || 'MARKETING').toUpperCase() === cat);
+                            if (catTemplates.length === 0) return null;
+                            const catLabel = cat === 'UTILITY' ? '⚡ Utility Templates' : cat === 'AUTHENTICATION' ? '🔐 Authentication Templates' : '📢 Marketing Templates';
+                            return (
+                              <optgroup key={cat} label={catLabel}>
+                                {catTemplates.map(tmpl => (
+                                  <option key={tmpl.name} value={tmpl.name}>
+                                    {tmpl.name} ({tmpl.language || 'en'})
+                                  </option>
+                                ))}
+                              </optgroup>
+                            );
+                          })}
                         </select>
                         {previewText && (
                           <div style={{

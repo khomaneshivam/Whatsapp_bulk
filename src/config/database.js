@@ -170,6 +170,8 @@ function initializeDatabase() {
     CREATE INDEX IF NOT EXISTS idx_recipients_status ON campaign_recipients(campaign_id, status);
     CREATE INDEX IF NOT EXISTS idx_templates_name ON templates(name);
     CREATE INDEX IF NOT EXISTS idx_templates_meta_id ON templates(meta_id);
+    CREATE INDEX IF NOT EXISTS idx_templates_category ON templates(category);
+    CREATE INDEX IF NOT EXISTS idx_templates_status ON templates(status);
     CREATE INDEX IF NOT EXISTS idx_replies_phone ON customer_replies(from_phone);
     CREATE INDEX IF NOT EXISTS idx_replies_campaign ON customer_replies(campaign_id);
     CREATE INDEX IF NOT EXISTS idx_replies_received ON customer_replies(received_at);

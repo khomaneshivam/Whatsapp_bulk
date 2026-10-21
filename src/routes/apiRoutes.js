@@ -269,7 +269,11 @@ router.post("/system/time", authenticateToken, requireAdmin, systemController.up
 // System Templates Management
 const templateController = require("../controllers/templateController");
 router.get("/templates", optionalAuth, templateController.listTemplates);
+router.get("/templates/categories", optionalAuth, templateController.getCategoriesSummary);
+router.post("/templates/sync", optionalAuth, templateController.syncTemplatesFromMeta);
 router.get("/broadcast/templates", optionalAuth, templateController.listTemplates);
+router.get("/broadcast/templates/categories", optionalAuth, templateController.getCategoriesSummary);
+router.post("/broadcast/templates/sync", optionalAuth, templateController.syncTemplatesFromMeta);
 router.post("/templates", optionalAuth, templateController.addTemplate);
 router.get("/templates/:templateId", optionalAuth, templateController.getTemplate);
 router.delete("/templates/:templateId", authenticateToken, requireAdmin, templateController.deleteTemplate);

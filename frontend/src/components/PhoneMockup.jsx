@@ -129,6 +129,44 @@ export default function PhoneMockup({ template, sampleData, mediaUrl, customBody
 
           {/* Message Bubble (Incoming to customer) */}
           <div className="wa-bubble-received">
+            {template?.category && (
+              <div style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '4px',
+                fontSize: '0.62rem',
+                fontWeight: 700,
+                padding: '2px 7px',
+                borderRadius: '4px',
+                marginBottom: '8px',
+                textTransform: 'uppercase',
+                letterSpacing: '0.04em',
+                background: String(template.category).toUpperCase() === 'UTILITY' 
+                  ? 'rgba(22, 163, 74, 0.22)' 
+                  : String(template.category).toUpperCase() === 'AUTHENTICATION' 
+                    ? 'rgba(217, 119, 6, 0.22)' 
+                    : 'rgba(168, 85, 247, 0.22)',
+                color: String(template.category).toUpperCase() === 'UTILITY' 
+                  ? '#4ade80' 
+                  : String(template.category).toUpperCase() === 'AUTHENTICATION' 
+                    ? '#fbbf24' 
+                    : '#c084fc',
+                border: `1px solid ${
+                  String(template.category).toUpperCase() === 'UTILITY' 
+                    ? 'rgba(74, 222, 128, 0.35)' 
+                    : String(template.category).toUpperCase() === 'AUTHENTICATION' 
+                      ? 'rgba(251, 191, 36, 0.35)' 
+                      : 'rgba(192, 132, 252, 0.35)'
+                }`
+              }}>
+                {String(template.category).toUpperCase() === 'UTILITY' 
+                  ? '⚡ Utility' 
+                  : String(template.category).toUpperCase() === 'AUTHENTICATION' 
+                    ? '🔐 Authentication' 
+                    : '📢 Marketing'}
+              </div>
+            )}
+
             {/* Header Media */}
             {(headerType === 'IMAGE' || mediaUrl) && (
               <div style={{

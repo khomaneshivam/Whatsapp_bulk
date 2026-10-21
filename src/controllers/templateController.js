@@ -1,5 +1,10 @@
 const { db } = require("../config/database");
-const { getTemplateDetails } = require("../services/metaWhatsAppService");
+const { 
+  getTemplateDetails, 
+  fetchWabaTemplates, 
+  resolveWabaId, 
+  clearTemplateCache 
+} = require("../services/metaWhatsAppService");
 
 /**
  * Parses JSON string fields on template row safely
@@ -29,12 +34,15 @@ function formatTemplateRow(row) {
     }));
   }
 
+  const rawCat = (row.category || "MARKETING").toUpperCase();
+  const validCat = ["MARKETING", "UTILITY", "AUTHENTICATION"].includes(rawCat) ? rawCat : "MARKETING";
+
   return {
     id: row.id,
     name: row.name,
     meta_id: row.meta_id || row.id,
     language: row.language || "en",
-    category: row.category || "MARKETING",
+    category: validCat,
     status: row.status || "APPROVED",
     parameter_format: row.parameter_format || "POSITIONAL",
     bodyText: bodyText,
@@ -47,11 +55,221 @@ function formatTemplateRow(row) {
 }
 
 /**
- * List all saved system templates
+ * List saved system templates with optional category, search, and status filtering
  */
 async function listTemplates(req, res) {
   try {
+    const categoryParam = String(req.query.category || "ALL").trim().toUpperCase();
+    const searchParam = String(req.query.search || req.query.q || "").trim();
+    const statusParam = String(req.query.status || "").trim().toUpperCase();
+
+    let sql = `SELECT * FROM templates WHERE 1=1`;
+    const params = [];
+
+    if (categoryParam && categoryParam !== "ALL") {
+      sql += ` AND UPPER(COALESCE(category, 'MARKETING')) = ?`;
+      params.push(categoryParam);
+    }
+
+    if (statusParam && statusParam !== "ALL") {
+      sql += ` AND UPPER(COALESCE(status, 'APPROVED')) = ?`;
+      params.push(statusParam);
+    }
+
+    if (searchParam) {
+      sql += ` AND (name LIKE ? OR meta_id LIKE ? OR body_text LIKE ? OR category LIKE ?)`;
+      const pattern = `%${searchParam}%`;
+      params.push(pattern, pattern, pattern, pattern);
+    }
+
+    sql += ` ORDER BY 
+      CASE WHEN name = 'kt_invitation_' THEN 1 
+           WHEN name = 'kt_restaurant_invitation' THEN 2 
+           ELSE 3 END,
+      created_at ASC`;
+
+    const rows = db.prepare(sql).all(...params);
+    const templates = rows.map(formatTemplateRow);
+
+    return res.status(200).json({
+      success: true,
+      category: categoryParam,
+      total: templates.length,
+      data: templates,
+      templates: templates
+    });
+  } catch (error) {
+    console.error("List templates error:", error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+}
+
+/**
+ * Get category breakdown counts and metadata across system templates
+ */
+async function getCategoriesSummary(req, res) {
+  try {
     const rows = db.prepare(`
+      SELECT UPPER(COALESCE(category, 'MARKETING')) as category, COUNT(*) as count 
+      FROM templates 
+      GROUP BY UPPER(COALESCE(category, 'MARKETING'))
+    `).all();
+
+    const countsMap = {
+      MARKETING: 0,
+      UTILITY: 0,
+      AUTHENTICATION: 0
+    };
+
+    let total = 0;
+    for (const r of rows) {
+      const cat = r.category || "MARKETING";
+      if (countsMap[cat] !== undefined) {
+        countsMap[cat] = Number(r.count) || 0;
+      }
+      total += Number(r.count) || 0;
+    }
+
+    const categories = [
+      {
+        id: "ALL",
+        key: "ALL",
+        label: "All Templates",
+        icon: "Layers",
+        count: total,
+        color: "#0F172A",
+        badgeBg: "#F1F5F9",
+        badgeBorder: "#E2E8F0",
+        description: "All approved WhatsApp templates in your workspace"
+      },
+      {
+        id: "MARKETING",
+        key: "MARKETING",
+        label: "Marketing",
+        icon: "📢",
+        count: countsMap.MARKETING,
+        color: "#7C3AED",
+        badgeBg: "#F3E8FF",
+        badgeBorder: "#E9D5FF",
+        description: "Promotions, announcements, discounts, invitations & partner outreach"
+      },
+      {
+        id: "UTILITY",
+        key: "UTILITY",
+        label: "Utility",
+        icon: "⚡",
+        count: countsMap.UTILITY,
+        color: "#16A34A",
+        badgeBg: "#DCFCE7",
+        badgeBorder: "#BBF7D0",
+        description: "Booking reminders, arrival guides, receipts & account notifications"
+      },
+      {
+        id: "AUTHENTICATION",
+        key: "AUTHENTICATION",
+        label: "Authentication",
+        icon: "🔐",
+        count: countsMap.AUTHENTICATION,
+        color: "#D97706",
+        badgeBg: "#FEF3C7",
+        badgeBorder: "#FDE68A",
+        description: "One-time passcodes (OTP), verification numbers & login alerts"
+      }
+    ];
+
+    return res.status(200).json({
+      success: true,
+      total,
+      breakdown: countsMap,
+      categories
+    });
+  } catch (error) {
+    console.error("Get categories summary error:", error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+}
+
+/**
+ * Synchronize all or category-specific templates directly from Meta Graph API
+ */
+async function syncTemplatesFromMeta(req, res) {
+  try {
+    const category = req.body?.category || req.query?.category || null;
+    const wabaId = req.body?.wabaId || req.query?.wabaId || null;
+
+    // Check if WABA ID is available before attempting sync
+    const activeWaba = resolveWabaId(wabaId);
+    if (!activeWaba) {
+      return res.status(400).json({
+        success: false,
+        code: "MISSING_WABA_ID",
+        message: "WhatsApp Business Account ID (WABA ID) is not configured. Please enter your WABA ID in Settings or specify it here to sync all templates directly from Meta."
+      });
+    }
+
+    const metaResult = await fetchWabaTemplates({
+      category: category && String(category).toUpperCase() !== "ALL" ? category : null,
+      wabaId: activeWaba
+    });
+
+    const metaTemplates = metaResult.templates || [];
+    let syncedCount = 0;
+    const breakdown = {
+      MARKETING: 0,
+      UTILITY: 0,
+      AUTHENTICATION: 0
+    };
+
+    if (metaTemplates.length > 0) {
+      const upsertStmt = db.prepare(`
+        INSERT INTO templates (
+          id, name, meta_id, language, category, status, parameter_format,
+          body_text, variables, components, buttons, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(id) DO UPDATE SET
+          name = excluded.name,
+          meta_id = excluded.meta_id,
+          language = excluded.language,
+          category = excluded.category,
+          status = excluded.status,
+          parameter_format = excluded.parameter_format,
+          body_text = excluded.body_text,
+          variables = excluded.variables,
+          components = excluded.components,
+          buttons = excluded.buttons,
+          updated_at = CURRENT_TIMESTAMP
+      `);
+
+      for (const tpl of metaTemplates) {
+        const cat = (tpl.category || "MARKETING").toUpperCase();
+        if (breakdown[cat] !== undefined) {
+          breakdown[cat]++;
+        } else {
+          breakdown.MARKETING++;
+        }
+
+        upsertStmt.run(
+          tpl.id,
+          tpl.name,
+          tpl.meta_id || tpl.id,
+          tpl.language || "en",
+          cat,
+          tpl.status || "APPROVED",
+          tpl.parameter_format || "POSITIONAL",
+          tpl.bodyText || "",
+          JSON.stringify(tpl.variables || []),
+          JSON.stringify(tpl.components || []),
+          JSON.stringify(tpl.buttons || [])
+        );
+        syncedCount++;
+      }
+
+      // Flush memory cache so subsequent calls reflect new templates immediately
+      clearTemplateCache();
+    }
+
+    // Fetch updated complete list from SQLite
+    const updatedRows = db.prepare(`
       SELECT * FROM templates 
       ORDER BY 
         CASE WHEN name = 'kt_invitation_' THEN 1 
@@ -59,16 +277,26 @@ async function listTemplates(req, res) {
              ELSE 3 END,
         created_at ASC
     `).all();
+    const updatedTemplates = updatedRows.map(formatTemplateRow);
 
-    const templates = rows.map(formatTemplateRow);
     return res.status(200).json({
       success: true,
-      data: templates,
-      templates: templates
+      message: `Successfully synchronized ${syncedCount} templates from Meta WABA (${breakdown.MARKETING} Marketing, ${breakdown.UTILITY} Utility, ${breakdown.AUTHENTICATION} Authentication).`,
+      wabaId: activeWaba,
+      category: category ? String(category).toUpperCase() : "ALL",
+      syncedCount,
+      breakdown,
+      templates: updatedTemplates,
+      data: updatedTemplates
     });
   } catch (error) {
-    console.error("List templates error:", error);
-    return res.status(500).json({ success: false, message: error.message });
+    console.error("Sync templates from Meta error:", error);
+    return res.status(error.statusCode || 500).json({
+      success: false,
+      code: error.code || "META_SYNC_ERROR",
+      message: error.message || "Failed to synchronize templates from Meta Cloud API.",
+      hint: error.hint
+    });
   }
 }
 
@@ -154,6 +382,8 @@ async function addTemplate(req, res) {
 
     const savedRow = db.prepare("SELECT * FROM templates WHERE id = ?").get(finalId);
     const formatted = formatTemplateRow(savedRow);
+
+    clearTemplateCache();
 
     return res.status(201).json({
       success: true,
@@ -255,6 +485,8 @@ async function deleteTemplate(req, res) {
       });
     }
 
+    clearTemplateCache();
+
     return res.status(200).json({
       success: true,
       message: "Template removed from system successfully."
@@ -267,6 +499,8 @@ async function deleteTemplate(req, res) {
 
 module.exports = {
   listTemplates,
+  getCategoriesSummary,
+  syncTemplatesFromMeta,
   addTemplate,
   getTemplate,
   deleteTemplate
