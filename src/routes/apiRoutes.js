@@ -1,5 +1,7 @@
 const express = require("express");
 const multer = require("multer");
+const fs = require("fs");
+const path = require("path");
 const router = express.Router();
 
 const uploadController = require("../controllers/uploadController");
@@ -309,24 +311,27 @@ router.get("/media/inbound/:mediaId", async (req, res) => {
       return res.status(400).json({ success: false, message: "Invalid media ID" });
     }
 
+    const cleanMediaId = mediaId.replace(/\.[a-zA-Z0-9]+$/, "");
     const inboundDir = path.resolve(__dirname, "../../public/uploads/inbound");
     if (!fs.existsSync(inboundDir)) {
       fs.mkdirSync(inboundDir, { recursive: true });
     }
 
-    // 1. Check if already cached on disk (matching mediaId.*)
+    // 1. Check if already cached on disk (matching cleanMediaId.* or mediaId)
     try {
-      const files = fs.readdirSync(inboundDir).filter(f => f.startsWith(`${mediaId}.`));
+      const files = fs.readdirSync(inboundDir).filter(f => f.startsWith(`${cleanMediaId}.`) || f === mediaId);
       if (files.length > 0) {
         const filePath = path.join(inboundDir, files[0]);
+        res.setHeader("Cache-Control", "public, max-age=604800, immutable");
         return res.sendFile(filePath);
       }
     } catch (e) {}
 
     // 2. Download from Meta Cloud API on the fly
     const { downloadAndSaveInboundMedia } = require("../services/metaWhatsAppService");
-    const downloadRes = await downloadAndSaveInboundMedia(mediaId);
+    const downloadRes = await downloadAndSaveInboundMedia(cleanMediaId);
     if (downloadRes?.localPath && fs.existsSync(downloadRes.localPath)) {
+      res.setHeader("Cache-Control", "public, max-age=604800, immutable");
       return res.sendFile(downloadRes.localPath);
     }
 

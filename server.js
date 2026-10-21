@@ -31,6 +31,29 @@ const uploadsPath = path.join(__dirname, "public", "uploads");
 if (!fs.existsSync(uploadsPath)) {
   fs.mkdirSync(uploadsPath, { recursive: true });
 }
+
+// Inbound media on-demand fallback if file has not finished downloading yet
+app.get("/uploads/inbound/:filename", async (req, res, next) => {
+  const filePath = path.join(uploadsPath, "inbound", req.params.filename);
+  if (fs.existsSync(filePath)) {
+    return next();
+  }
+  try {
+    const rawId = req.params.filename.replace(/\.[a-zA-Z0-9]+$/, "");
+    if (/^[a-zA-Z0-9_.-]+$/.test(rawId)) {
+      const { downloadAndSaveInboundMedia } = require("./src/services/metaWhatsAppService");
+      const downloadRes = await downloadAndSaveInboundMedia(rawId);
+      if (downloadRes?.localPath && fs.existsSync(downloadRes.localPath)) {
+        res.setHeader("Cache-Control", "public, max-age=604800, immutable");
+        return res.sendFile(downloadRes.localPath);
+      }
+    }
+  } catch (e) {
+    console.warn("[Uploads Inbound On-Demand] Error:", e.message);
+  }
+  return res.status(404).json({ success: false, message: "Inbound media file not found" });
+});
+
 app.use("/uploads", express.static(uploadsPath));
 
 const webhookController = require("./src/controllers/webhookController");
@@ -44,14 +67,14 @@ app.use("/api", apiRoutes);
 
 // Fallback for SPA
 app.get("*", (req, res) => {
-  if (!req.path.startsWith("/api") && !req.path.startsWith("/webhook")) {
+  if (!req.path.startsWith("/api") && !req.path.startsWith("/webhook") && !req.path.startsWith("/uploads")) {
     if (fs.existsSync(path.join(distPath, "index.html"))) {
       res.sendFile(path.join(distPath, "index.html"));
     } else {
       res.sendFile(path.join(publicPath, "index.html"));
     }
   } else {
-    res.status(404).json({ success: false, message: "API endpoint not found" });
+    res.status(404).json({ success: false, message: "Resource not found" });
   }
 });
 

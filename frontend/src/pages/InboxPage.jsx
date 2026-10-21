@@ -8,22 +8,258 @@ import {
   Search, 
   ShieldCheck, 
   User, 
-  Clock, 
   Sparkles,
   ArrowLeft,
   X,
-  Phone,
   Paperclip,
   Image as ImageIcon,
-  Video,
   FileVideo,
   Play,
   Trash2,
   Download,
   ExternalLink,
-  Maximize2
+  Maximize2,
+  ImageOff,
+  ZoomIn,
+  ZoomOut
 } from 'lucide-react';
 import { formatIndianTime } from '../utils/indianTime';
+
+/**
+ * WhatsApp-style image card with loading shimmer, automatic fallback to proxy,
+ * broken state retry, and click-to-lightbox.
+ */
+function ChatImageBubble({
+  src,
+  alt = "WhatsApp Photo",
+  caption,
+  time,
+  isOutbound,
+  onOpenLightbox,
+  mediaId,
+  senderName
+}) {
+  const [loadStatus, setLoadStatus] = useState('loading'); // 'loading' | 'loaded' | 'error'
+  const [retryAttempt, setRetryAttempt] = useState(0);
+  const [imageSrc, setImageSrc] = useState(src);
+  const [prevSrc, setPrevSrc] = useState(src);
+
+  if (src !== prevSrc) {
+    setPrevSrc(src);
+    setImageSrc(src);
+    setLoadStatus('loading');
+    setRetryAttempt(0);
+  }
+
+  function handleImageError() {
+    // If loading from /uploads/inbound/ failed, auto-fallback to /api/media/inbound/
+    if (retryAttempt === 0) {
+      setRetryAttempt(1);
+      if (imageSrc && imageSrc.includes('/uploads/inbound/')) {
+        const parts = imageSrc.split('/uploads/inbound/')[1];
+        const extractedId = parts ? parts.split('?')[0].split('.')[0] : null;
+        if (extractedId) {
+          setImageSrc(`/api/media/inbound/${extractedId}?retry=1`);
+          return;
+        }
+      } else if (mediaId) {
+        setImageSrc(`/api/media/inbound/${mediaId}?retry=1`);
+        return;
+      }
+    }
+    setLoadStatus('error');
+  }
+
+  function handleManualRetry(e) {
+    if (e) e.stopPropagation();
+    setLoadStatus('loading');
+    setRetryAttempt(prev => prev + 1);
+    const separator = imageSrc.includes('?') ? '&' : '?';
+    setImageSrc(`${imageSrc.split('?')[0]}${separator}t=${Date.now()}`);
+  }
+
+  return (
+    <div style={{
+      width: '100%',
+      minWidth: '220px',
+      maxWidth: '320px',
+      marginBottom: caption ? '6px' : '2px'
+    }}>
+      {/* 1. Loading Shimmer Skeleton */}
+      {loadStatus === 'loading' && (
+        <div style={{
+          width: '100%',
+          height: '210px',
+          background: 'linear-gradient(110deg, #F1F5F9 25%, #E2E8F0 50%, #F1F5F9 75%)',
+          backgroundSize: '200% 100%',
+          animation: 'shimmer 1.4s infinite linear',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: '8px',
+          color: '#64748B',
+          borderRadius: '8px',
+          border: '1px solid #E2E8F0'
+        }}>
+          <ImageIcon size={28} color="#94A3B8" className="pulse-glow" />
+          <span style={{ fontSize: '0.75rem', fontWeight: 600, color: '#475569' }}>
+            Loading WhatsApp Photo...
+          </span>
+        </div>
+      )}
+
+      {/* 2. Error Fallback Card */}
+      {loadStatus === 'error' && (
+        <div style={{
+          padding: '16px 12px',
+          background: '#FEF2F2',
+          border: '1px solid #FECACA',
+          borderRadius: '8px',
+          textAlign: 'center',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          gap: '6px'
+        }}>
+          <div style={{
+            width: '38px',
+            height: '38px',
+            borderRadius: '50%',
+            background: '#FEE2E2',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            color: '#DC2626'
+          }}>
+            <ImageOff size={18} />
+          </div>
+          <div style={{ fontSize: '0.8rem', fontWeight: 700, color: '#991B1B' }}>
+            Photo Unavailable
+          </div>
+          <div style={{ fontSize: '0.7rem', color: '#B91C1C', lineHeight: 1.35, maxWidth: '240px' }}>
+            Image could not be loaded or is downloading from Meta WhatsApp servers.
+          </div>
+          <button
+            type="button"
+            onClick={handleManualRetry}
+            style={{
+              marginTop: '4px',
+              background: '#FFFFFF',
+              border: '1px solid #DC2626',
+              color: '#DC2626',
+              borderRadius: '6px',
+              padding: '5px 12px',
+              fontSize: '0.72rem',
+              fontWeight: 700,
+              cursor: 'pointer',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '5px',
+              transition: 'all 0.15s ease'
+            }}
+          >
+            <RefreshCw size={12} />
+            <span>Retry Download</span>
+          </button>
+        </div>
+      )}
+
+      {/* 3. Loaded Image Card */}
+      <div
+        className="chat-image-container"
+        onClick={() => {
+          if (loadStatus === 'loaded') {
+            onOpenLightbox({
+              url: imageSrc,
+              caption,
+              time,
+              sender: isOutbound ? 'You' : senderName,
+              isOutbound
+            });
+          }
+        }}
+        style={{
+          display: loadStatus === 'loaded' ? 'block' : 'none'
+        }}
+        title="Click to view full photo"
+      >
+        <img
+          src={imageSrc}
+          alt={caption || alt}
+          onLoad={() => setLoadStatus('loaded')}
+          onError={handleImageError}
+          style={{
+            width: '100%',
+            maxHeight: '340px',
+            objectFit: 'contain',
+            display: 'block',
+            margin: '0 auto',
+            borderRadius: '8px'
+          }}
+          loading="eager"
+        />
+
+        {/* Hover Expand Overlay */}
+        <div className="chat-image-overlay">
+          <div style={{
+            background: 'rgba(15, 23, 42, 0.75)',
+            color: '#FFFFFF',
+            padding: '5px 12px',
+            borderRadius: '20px',
+            fontSize: '0.75rem',
+            fontWeight: 600,
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+            backdropFilter: 'blur(4px)',
+            boxShadow: '0 2px 8px rgba(0, 0, 0, 0.3)'
+          }}>
+            <Maximize2 size={13} />
+            <span>Click to Expand</span>
+          </div>
+        </div>
+
+        {/* If NO caption: Floating timestamp pill inside the photo */}
+        {!caption && (
+          <div style={{
+            position: 'absolute',
+            bottom: '6px',
+            right: '6px',
+            background: 'rgba(15, 23, 42, 0.72)',
+            color: '#FFFFFF',
+            padding: '2px 8px',
+            borderRadius: '10px',
+            fontSize: '0.675rem',
+            fontWeight: 600,
+            display: 'flex',
+            alignItems: 'center',
+            gap: '4px',
+            backdropFilter: 'blur(4px)',
+            pointerEvents: 'none'
+          }}>
+            <span>{time}</span>
+            {isOutbound && <CheckCheck size={12} color="#60A5FA" />}
+          </div>
+        )}
+      </div>
+
+      {/* Clean Caption beneath the photo */}
+      {caption && (
+        <div style={{
+          padding: '6px 4px 2px 4px',
+          fontSize: '0.85rem',
+          lineHeight: 1.45,
+          color: '#0F172A',
+          whiteSpace: 'pre-wrap',
+          wordBreak: 'break-word'
+        }}>
+          {caption}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function InboxPage() {
   const { token } = useAuth();
@@ -41,22 +277,42 @@ export default function InboxPage() {
 
   // Lightbox modal state for full-screen image preview
   const [lightboxMedia, setLightboxMedia] = useState(null);
-
-  const messagesEndRef = useRef(null);
-  const textareaRef = useRef(null);
-  const fileInputRef = useRef(null);
-  const initialSelectionDone = useRef(false);
+  const [lightboxZoomed, setLightboxZoomed] = useState(false);
+  const [downloadingMedia, setDownloadingMedia] = useState(false);
 
   // Close lightbox on Escape key
   useEffect(() => {
     function handleKeyDown(e) {
       if (e.key === 'Escape' && lightboxMedia) {
         setLightboxMedia(null);
+        setLightboxZoomed(false);
       }
     }
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [lightboxMedia]);
+
+  async function handleDownloadMedia(url, caption) {
+    if (!url) return;
+    try {
+      setDownloadingMedia(true);
+      const res = await fetch(url);
+      const blob = await res.blob();
+      const blobUrl = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      const cleanName = (caption || 'whatsapp_photo').replace(/[^a-zA-Z0-9_-]/g, '_').substring(0, 25);
+      a.download = `${cleanName || 'whatsapp_photo'}_${Date.now()}.jpg`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(blobUrl);
+    } catch (e) {
+      window.open(url, '_blank');
+    } finally {
+      setDownloadingMedia(false);
+    }
+  }
 
   useEffect(() => {
     loadInbox(false);
@@ -121,41 +377,63 @@ export default function InboxPage() {
           const isOutbound = r.message_type === 'outbound';
           const incomingText = r.message_body || r.message_text || '';
 
+          // Determine if media exists or can be extracted from raw_payload or media_url
+          let resolvedMediaUrl = r.media_url || null;
+          let resolvedMediaType = r.media_type || null;
+          let resolvedCaption = r.media_caption || null;
+          let rawMediaId = null;
+
+          if (!resolvedMediaUrl && r.raw_payload) {
+            try {
+              const raw = typeof r.raw_payload === 'string' ? JSON.parse(r.raw_payload) : r.raw_payload;
+              const mediaObj = raw.image || raw.video || raw.document || raw.audio || raw.sticker;
+              if (mediaObj?.id) {
+                rawMediaId = mediaObj.id;
+                resolvedMediaUrl = `/api/media/inbound/${mediaObj.id}`;
+                resolvedMediaType = r.message_type || (raw.image ? 'image' : (raw.video ? 'video' : 'image'));
+                resolvedCaption = resolvedCaption || mediaObj.caption || mediaObj.filename || null;
+              }
+            } catch (e) {}
+          }
+
           if (isOutbound) {
             convos[phoneKey].messages.push({
               id: r.id || `out_${Math.random()}`,
               from_phone: 'Agent',
               text: incomingText || r.reply_text || '',
-              media_url: r.media_url || null,
-              media_type: r.media_type || null,
-              media_caption: r.media_caption || null,
+              media_url: resolvedMediaUrl,
+              media_type: resolvedMediaType,
+              media_caption: resolvedCaption,
               time: r.received_at,
               is_outbound: true,
               status: r.reply_status || 'SENT'
             });
           } else {
-            if (incomingText || r.media_url) {
+            const isMediaMsg = Boolean(resolvedMediaUrl || rawMediaId || r.message_type === 'image' || r.message_type === 'video');
+            if (incomingText || isMediaMsg) {
               convos[phoneKey].messages.push({
                 id: r.id,
                 from_phone: r.from_phone,
                 text: incomingText,
-                media_url: r.media_url || null,
-                media_type: r.media_type || null,
-                media_caption: r.media_caption || null,
+                media_url: resolvedMediaUrl,
+                media_type: resolvedMediaType || (r.message_type === 'image' ? 'image' : null),
+                media_caption: resolvedCaption,
+                media_id: rawMediaId,
                 time: r.received_at,
                 is_outbound: false,
                 is_read: r.is_read
               });
             }
 
+            // If an auto-reply was sent to this message
             if (r.reply_text) {
               convos[phoneKey].messages.push({
                 id: `${r.id}_reply`,
                 from_phone: 'Agent',
                 text: r.reply_text,
-                media_url: r.media_url || null,
-                media_type: r.media_type || null,
-                media_caption: r.media_caption || null,
+                media_url: null, // Critical: do NOT duplicate customer's incoming media onto agent text auto-reply
+                media_type: null,
+                media_caption: null,
                 time: r.reply_sent_at || r.received_at,
                 is_outbound: true,
                 status: r.reply_status || 'SENT',
@@ -170,9 +448,12 @@ export default function InboxPage() {
           c.messages.sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime());
           if (c.messages.length > 0) {
             const last = c.messages[c.messages.length - 1];
-            const mediaTag = last.media_type ? (last.media_type === 'video' ? '🎬 Video' : '📷 Photo') : (last.media_url ? '📷 Photo' : '');
-            let previewText = last.text ? last.text.replace(/^\[Image\]\s*/i, '').trim() : '';
-            if (/^\[(image|photo|image received)\]$/i.test(previewText.trim())) {
+            const isLastVideo = last.media_type === 'video' || (last.media_url && /\.(mp4|3gp|mov|webm)(\?.*)?$/i.test(last.media_url));
+            const isLastImage = last.media_type === 'image' || (last.media_url && !isLastVideo) || Boolean(last.media_id);
+            const mediaTag = isLastVideo ? '🎬 Video' : (isLastImage ? '📷 Photo' : '');
+
+            let previewText = last.text ? last.text.replace(/^\[(image|photo)\]\s*/i, '').trim() : '';
+            if (/^\[(image|photo|image received|video|video received)\]$/i.test(previewText.trim())) {
               previewText = '';
             }
             if (!previewText && last.media_caption) {
@@ -760,44 +1041,46 @@ export default function InboxPage() {
                 {selectedConvo.messages.map((m, idx) => {
                   const isOutbound = m.is_outbound;
                   const displayTime = m.time ? formatIndianTime(m.time) : '';
-                  const hasMedia = Boolean(m.media_url);
                   const isVideo = m.media_type === 'video' || (m.media_url && /\.(mp4|3gp|mov|webm)(\?.*)?$/i.test(m.media_url));
-                  const isImage = m.media_type === 'image' || (m.media_url && /\.(jpg|jpeg|png|webp|gif)(\?.*)?$/i.test(m.media_url)) || (!isVideo && hasMedia);
+                  const isImage = m.media_type === 'image' || (m.media_url && !isVideo) || Boolean(m.media_id);
                   const msgText = m.text || m.message_body || m.message_text || '';
 
-                  // Extract clean caption: strip generic "[Image received]" placeholder
+                  // Extract clean caption: strip generic placeholders
                   let cleanCaption = m.media_caption || '';
                   if (!cleanCaption && msgText) {
-                    if (!/^\[(image|photo|image received)\]$/i.test(msgText.trim())) {
-                      cleanCaption = msgText.replace(/^\[Image\]\s*/i, '').trim();
+                    if (!/^\[(image|photo|image received|video|video received)\]$/i.test(msgText.trim())) {
+                      cleanCaption = msgText.replace(/^\[(image|photo)\]\s*/i, '').trim();
                     }
                   }
-                  const shouldShowTextBlock = !hasMedia && Boolean(msgText);
+
+                  const imageSrcToUse = m.media_url || (m.media_id ? `/api/media/inbound/${m.media_id}` : null);
+                  const shouldShowTextBlock = !isImage && !isVideo && Boolean(msgText);
+                  const hasCaption = Boolean(cleanCaption);
 
                   return (
                     <div
                       key={m.id || idx}
                       style={{
-                        maxWidth: '80%',
+                        maxWidth: isImage ? '340px' : '80%',
                         alignSelf: isOutbound ? 'flex-end' : 'flex-start',
                         background: isOutbound ? '#DCFCE7' : '#FFFFFF',
                         color: '#0F172A',
                         border: `1px solid ${isOutbound ? '#BBF7D0' : '#E2E8F0'}`,
                         borderRadius: isOutbound ? '12px 12px 2px 12px' : '12px 12px 12px 2px',
-                        padding: '10px 14px',
+                        padding: isImage ? '6px 6px 6px 6px' : '10px 14px',
                         boxShadow: 'var(--shadow-xs)',
                         wordWrap: 'break-word',
                         wordBreak: 'break-word'
                       }}
                     >
                       {m.is_auto && (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.68rem', fontWeight: 700, color: '#16A34A', marginBottom: '6px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.68rem', fontWeight: 700, color: '#16A34A', marginBottom: '6px', padding: isImage ? '4px 6px 0 6px' : '0' }}>
                           <Sparkles size={11} /> Auto-Reply Bot
                         </div>
                       )}
 
                       {/* Attached Media Display: Video */}
-                      {hasMedia && isVideo && (
+                      {isVideo && m.media_url && (
                         <div style={{ marginBottom: cleanCaption ? '8px' : '4px', borderRadius: '8px', overflow: 'hidden', background: '#000000' }}>
                           <video
                             controls
@@ -820,74 +1103,17 @@ export default function InboxPage() {
                       )}
 
                       {/* Attached Media Display: Image */}
-                      {hasMedia && isImage && (
-                        <div style={{ marginBottom: cleanCaption ? '6px' : '2px', borderRadius: '8px', overflow: 'hidden' }}>
-                          <div 
-                            onClick={() => setLightboxMedia({
-                              url: m.media_url,
-                              caption: cleanCaption,
-                              time: m.time,
-                              sender: isOutbound ? 'You' : (selectedConvo.name || selectedConvo.phone),
-                              isOutbound
-                            })}
-                            style={{ 
-                              cursor: 'pointer', 
-                              position: 'relative', 
-                              borderRadius: '8px', 
-                              overflow: 'hidden',
-                              background: '#F1F5F9',
-                              border: '1px solid rgba(0, 0, 0, 0.06)'
-                            }}
-                            title="Click to view full photo"
-                          >
-                            <img
-                              src={m.media_url}
-                              alt={cleanCaption || "WhatsApp Photo"}
-                              style={{
-                                maxWidth: '100%',
-                                maxHeight: '340px',
-                                objectFit: 'contain',
-                                display: 'block',
-                                borderRadius: '8px',
-                                margin: '0 auto',
-                                cursor: 'pointer'
-                              }}
-                              loading="lazy"
-                            />
-                            <div style={{
-                              position: 'absolute',
-                              bottom: '6px',
-                              right: '6px',
-                              background: 'rgba(15, 23, 42, 0.65)',
-                              color: '#FFFFFF',
-                              padding: '3px 8px',
-                              borderRadius: '4px',
-                              fontSize: '0.675rem',
-                              fontWeight: 600,
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: '4px',
-                              backdropFilter: 'blur(3px)',
-                              boxShadow: '0 2px 4px rgba(0,0,0,0.2)'
-                            }}>
-                              <Maximize2 size={11} /> View Photo
-                            </div>
-                          </div>
-
-                          {cleanCaption && (
-                            <div style={{ 
-                              fontSize: '0.85rem', 
-                              lineHeight: 1.45, 
-                              whiteSpace: 'pre-wrap', 
-                              wordBreak: 'break-word',
-                              color: '#0F172A',
-                              marginTop: '6px',
-                              padding: '0 2px'
-                            }}>
-                              {cleanCaption}
-                            </div>
-                          )}
-                        </div>
+                      {isImage && (imageSrcToUse || m.media_id) && (
+                        <ChatImageBubble
+                          src={imageSrcToUse}
+                          alt={cleanCaption || "WhatsApp Photo"}
+                          caption={cleanCaption}
+                          time={displayTime}
+                          isOutbound={isOutbound}
+                          mediaId={m.media_id}
+                          senderName={selectedConvo.name || selectedConvo.phone}
+                          onOpenLightbox={setLightboxMedia}
+                        />
                       )}
 
                       {/* Preserved Formatted Text with Linebreaks and Spaces */}
@@ -902,41 +1128,45 @@ export default function InboxPage() {
                         </div>
                       )}
 
-                      <div style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'flex-end',
-                        gap: '6px',
-                        fontSize: '0.675rem',
-                        color: '#64748B',
-                        marginTop: '4px'
-                      }}>
-                        <span>{displayTime}</span>
-                        {isOutbound && <CheckCheck size={13} color="#2563EB" />}
-                        {typeof m.id === 'number' && (
-                          <button
-                            type="button"
-                            onClick={() => handleDeleteMessage(m.id)}
-                            style={{
-                              background: 'transparent',
-                              border: 'none',
-                              color: '#94A3B8',
-                              cursor: 'pointer',
-                              padding: '2px',
-                              borderRadius: '3px',
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              marginLeft: '2px',
-                              transition: 'color 0.15s ease'
-                            }}
-                            onMouseEnter={e => e.currentTarget.style.color = '#DC2626'}
-                            onMouseLeave={e => e.currentTarget.style.color = '#94A3B8'}
-                            title="Delete this message"
-                          >
-                            <Trash2 size={11} />
-                          </button>
-                        )}
-                      </div>
+                      {/* Timestamp & Status: show if text message, or video, or image with caption */}
+                      {(!isImage || hasCaption || isVideo) && (
+                        <div style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'flex-end',
+                          gap: '6px',
+                          fontSize: '0.675rem',
+                          color: '#64748B',
+                          marginTop: isImage ? '2px' : '4px',
+                          padding: isImage ? '0 4px 2px 0' : '0'
+                        }}>
+                          <span>{displayTime}</span>
+                          {isOutbound && <CheckCheck size={13} color="#2563EB" />}
+                          {typeof m.id === 'number' && (
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteMessage(m.id)}
+                              style={{
+                                background: 'transparent',
+                                border: 'none',
+                                color: '#94A3B8',
+                                cursor: 'pointer',
+                                padding: '2px',
+                                borderRadius: '3px',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                marginLeft: '2px',
+                                transition: 'color 0.15s ease'
+                              }}
+                              onMouseEnter={e => e.currentTarget.style.color = '#DC2626'}
+                              onMouseLeave={e => e.currentTarget.style.color = '#94A3B8'}
+                              title="Delete this message"
+                            >
+                              <Trash2 size={11} />
+                            </button>
+                          )}
+                        </div>
+                      )}
                     </div>
                   );
                 })}
@@ -1182,20 +1412,12 @@ export default function InboxPage() {
       {/* Full-Screen Image Lightbox Modal */}
       {lightboxMedia && (
         <div 
-          onClick={() => setLightboxMedia(null)}
-          style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            background: 'rgba(15, 23, 42, 0.92)',
-            backdropFilter: 'blur(8px)',
-            display: 'flex',
-            flexDirection: 'column',
-            zIndex: 9999,
-            padding: '16px'
+          className="lightbox-backdrop"
+          onClick={() => {
+            setLightboxMedia(null);
+            setLightboxZoomed(false);
           }}
+          style={{ padding: '16px' }}
         >
           {/* Lightbox Header Bar */}
           <div 
@@ -1206,7 +1428,10 @@ export default function InboxPage() {
               justifyContent: 'space-between',
               color: '#FFFFFF',
               marginBottom: '10px',
-              padding: '6px 12px'
+              padding: '6px 14px',
+              background: 'rgba(0, 0, 0, 0.4)',
+              borderRadius: '8px',
+              backdropFilter: 'blur(6px)'
             }}
           >
             <div>
@@ -1220,9 +1445,36 @@ export default function InboxPage() {
             </div>
 
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <a
-                href={lightboxMedia.url}
-                download
+              {/* Zoom In / Out Toggle */}
+              <button
+                type="button"
+                onClick={() => setLightboxZoomed(prev => !prev)}
+                className="btn"
+                style={{
+                  background: lightboxZoomed ? 'rgba(34, 197, 94, 0.35)' : 'rgba(255, 255, 255, 0.15)',
+                  color: '#FFFFFF',
+                  border: '1px solid rgba(255, 255, 255, 0.25)',
+                  padding: '7px 12px',
+                  fontSize: '0.78rem',
+                  fontWeight: 600,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  transition: 'background 0.15s ease'
+                }}
+                title={lightboxZoomed ? "Zoom out to fit" : "Zoom in 100%"}
+              >
+                {lightboxZoomed ? <ZoomOut size={14} /> : <ZoomIn size={14} />}
+                <span>{lightboxZoomed ? "Fit" : "100%"}</span>
+              </button>
+
+              {/* Direct Blob Download */}
+              <button
+                type="button"
+                onClick={() => handleDownloadMedia(lightboxMedia.url, lightboxMedia.caption)}
+                disabled={downloadingMedia}
                 className="btn"
                 style={{
                   background: 'rgba(255, 255, 255, 0.15)',
@@ -1234,16 +1486,17 @@ export default function InboxPage() {
                   display: 'flex',
                   alignItems: 'center',
                   gap: '6px',
-                  textDecoration: 'none',
                   borderRadius: '6px',
+                  cursor: 'pointer',
                   transition: 'background 0.15s ease'
                 }}
-                title="Download image to device"
+                title="Download high-resolution image to device"
               >
                 <Download size={14} />
-                <span>Download</span>
-              </a>
+                <span>{downloadingMedia ? 'Downloading...' : 'Download'}</span>
+              </button>
 
+              {/* Full Size in New Tab */}
               <a
                 href={lightboxMedia.url}
                 target="_blank"
@@ -1263,15 +1516,19 @@ export default function InboxPage() {
                   borderRadius: '6px',
                   transition: 'background 0.15s ease'
                 }}
-                title="Open full resolution in new tab"
+                title="Open raw image in new tab"
               >
                 <ExternalLink size={14} />
                 <span>Full Size</span>
               </a>
 
+              {/* Close Button */}
               <button
                 type="button"
-                onClick={() => setLightboxMedia(null)}
+                onClick={() => {
+                  setLightboxMedia(null);
+                  setLightboxZoomed(false);
+                }}
                 style={{
                   background: 'rgba(255, 255, 255, 0.2)',
                   border: 'none',
@@ -1301,19 +1558,24 @@ export default function InboxPage() {
               flexDirection: 'column',
               alignItems: 'center',
               justifyContent: 'center',
-              overflow: 'hidden'
+              overflow: lightboxZoomed ? 'auto' : 'hidden',
+              padding: '10px'
             }}
           >
             <img
               src={lightboxMedia.url}
               alt={lightboxMedia.caption || "WhatsApp Photo"}
+              onClick={() => setLightboxZoomed(prev => !prev)}
               style={{
-                maxWidth: '92vw',
-                maxHeight: '76vh',
+                maxWidth: lightboxZoomed ? 'none' : '92vw',
+                maxHeight: lightboxZoomed ? 'none' : '76vh',
                 objectFit: 'contain',
                 borderRadius: '8px',
-                boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.6)'
+                cursor: lightboxZoomed ? 'zoom-out' : 'zoom-in',
+                boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.65)',
+                transition: 'transform 0.15s ease'
               }}
+              title="Click photo to toggle 100% zoom"
             />
 
             {lightboxMedia.caption && (
