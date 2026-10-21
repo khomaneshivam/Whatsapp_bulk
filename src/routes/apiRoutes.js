@@ -301,6 +301,42 @@ router.delete("/inbox/conversation/:phone", optionalAuth, webhookController.dele
 router.delete("/inbox/conversation", optionalAuth, webhookController.deleteConversation);
 router.delete("/replies/conversation/:phone", optionalAuth, webhookController.deleteConversation);
 
+// Inbound Customer Media Streaming & Download Proxy
+router.get("/media/inbound/:mediaId", async (req, res) => {
+  try {
+    const { mediaId } = req.params;
+    if (!mediaId || !/^[a-zA-Z0-9_.-]+$/.test(mediaId)) {
+      return res.status(400).json({ success: false, message: "Invalid media ID" });
+    }
+
+    const inboundDir = path.resolve(__dirname, "../../public/uploads/inbound");
+    if (!fs.existsSync(inboundDir)) {
+      fs.mkdirSync(inboundDir, { recursive: true });
+    }
+
+    // 1. Check if already cached on disk (matching mediaId.*)
+    try {
+      const files = fs.readdirSync(inboundDir).filter(f => f.startsWith(`${mediaId}.`));
+      if (files.length > 0) {
+        const filePath = path.join(inboundDir, files[0]);
+        return res.sendFile(filePath);
+      }
+    } catch (e) {}
+
+    // 2. Download from Meta Cloud API on the fly
+    const { downloadAndSaveInboundMedia } = require("../services/metaWhatsAppService");
+    const downloadRes = await downloadAndSaveInboundMedia(mediaId);
+    if (downloadRes?.localPath && fs.existsSync(downloadRes.localPath)) {
+      return res.sendFile(downloadRes.localPath);
+    }
+
+    return res.status(404).json({ success: false, message: "Inbound media not found or could not be downloaded." });
+  } catch (err) {
+    console.error("[Inbound Media Proxy] Error:", err.message);
+    return res.status(500).json({ success: false, message: "Failed to download media: " + err.message });
+  }
+});
+
 // Direct inbox reply by phone/contact (Supports formatted multi-line text, images, and videos)
 const { sendTextMessage, sendMediaMessage } = require("../services/metaWhatsAppService");
 

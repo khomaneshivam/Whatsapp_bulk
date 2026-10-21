@@ -18,7 +18,10 @@ import {
   Video,
   FileVideo,
   Play,
-  Trash2
+  Trash2,
+  Download,
+  ExternalLink,
+  Maximize2
 } from 'lucide-react';
 import { formatIndianTime } from '../utils/indianTime';
 
@@ -36,10 +39,24 @@ export default function InboxPage() {
   const [mediaPreviewUrl, setMediaPreviewUrl] = useState(null);
   const [mediaType, setMediaType] = useState(null); // 'image' | 'video'
 
+  // Lightbox modal state for full-screen image preview
+  const [lightboxMedia, setLightboxMedia] = useState(null);
+
   const messagesEndRef = useRef(null);
   const textareaRef = useRef(null);
   const fileInputRef = useRef(null);
   const initialSelectionDone = useRef(false);
+
+  // Close lightbox on Escape key
+  useEffect(() => {
+    function handleKeyDown(e) {
+      if (e.key === 'Escape' && lightboxMedia) {
+        setLightboxMedia(null);
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [lightboxMedia]);
 
   useEffect(() => {
     loadInbox(false);
@@ -111,6 +128,7 @@ export default function InboxPage() {
               text: incomingText || r.reply_text || '',
               media_url: r.media_url || null,
               media_type: r.media_type || null,
+              media_caption: r.media_caption || null,
               time: r.received_at,
               is_outbound: true,
               status: r.reply_status || 'SENT'
@@ -123,6 +141,7 @@ export default function InboxPage() {
                 text: incomingText,
                 media_url: r.media_url || null,
                 media_type: r.media_type || null,
+                media_caption: r.media_caption || null,
                 time: r.received_at,
                 is_outbound: false,
                 is_read: r.is_read
@@ -136,6 +155,7 @@ export default function InboxPage() {
                 text: r.reply_text,
                 media_url: r.media_url || null,
                 media_type: r.media_type || null,
+                media_caption: r.media_caption || null,
                 time: r.reply_sent_at || r.received_at,
                 is_outbound: true,
                 status: r.reply_status || 'SENT',
@@ -150,10 +170,17 @@ export default function InboxPage() {
           c.messages.sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime());
           if (c.messages.length > 0) {
             const last = c.messages[c.messages.length - 1];
-            const mediaTag = last.media_type ? (last.media_type === 'video' ? '🎬 Video' : '📷 Image') : '';
-            c.lastMessage = last.is_outbound 
-              ? (last.text ? `You: ${last.text}` : `You: [${mediaTag || 'Media'}]`) 
-              : (last.text ? last.text : `[${mediaTag || 'Media received'}]`);
+            const mediaTag = last.media_type ? (last.media_type === 'video' ? '🎬 Video' : '📷 Photo') : (last.media_url ? '📷 Photo' : '');
+            let previewText = last.text ? last.text.replace(/^\[Image\]\s*/i, '').trim() : '';
+            if (/^\[(image|photo|image received)\]$/i.test(previewText.trim())) {
+              previewText = '';
+            }
+            if (!previewText && last.media_caption) {
+              previewText = last.media_caption.trim();
+            }
+            const snippet = previewText ? (mediaTag ? `${mediaTag}: ${previewText}` : previewText) : (mediaTag || 'Message');
+
+            c.lastMessage = last.is_outbound ? `You: ${snippet}` : snippet;
             c.lastTime = last.time;
           }
         });
@@ -738,6 +765,15 @@ export default function InboxPage() {
                   const isImage = m.media_type === 'image' || (m.media_url && /\.(jpg|jpeg|png|webp|gif)(\?.*)?$/i.test(m.media_url)) || (!isVideo && hasMedia);
                   const msgText = m.text || m.message_body || m.message_text || '';
 
+                  // Extract clean caption: strip generic "[Image received]" placeholder
+                  let cleanCaption = m.media_caption || '';
+                  if (!cleanCaption && msgText) {
+                    if (!/^\[(image|photo|image received)\]$/i.test(msgText.trim())) {
+                      cleanCaption = msgText.replace(/^\[Image\]\s*/i, '').trim();
+                    }
+                  }
+                  const shouldShowTextBlock = !hasMedia && Boolean(msgText);
+
                   return (
                     <div
                       key={m.id || idx}
@@ -760,9 +796,9 @@ export default function InboxPage() {
                         </div>
                       )}
 
-                      {/* Attached Media Display (Video or Image) */}
+                      {/* Attached Media Display: Video */}
                       {hasMedia && isVideo && (
-                        <div style={{ marginBottom: msgText ? '8px' : '4px', borderRadius: '8px', overflow: 'hidden', background: '#000000' }}>
+                        <div style={{ marginBottom: cleanCaption ? '8px' : '4px', borderRadius: '8px', overflow: 'hidden', background: '#000000' }}>
                           <video
                             controls
                             playsInline
@@ -775,31 +811,87 @@ export default function InboxPage() {
                               borderRadius: '8px'
                             }}
                           />
+                          {cleanCaption && (
+                            <div style={{ padding: '6px 8px', color: '#FFFFFF', fontSize: '0.85rem' }}>
+                              {cleanCaption}
+                            </div>
+                          )}
                         </div>
                       )}
 
+                      {/* Attached Media Display: Image */}
                       {hasMedia && isImage && (
-                        <div style={{ marginBottom: msgText ? '8px' : '4px', borderRadius: '8px', overflow: 'hidden' }}>
-                          <a href={m.media_url} target="_blank" rel="noopener noreferrer" title="Click to view full image">
+                        <div style={{ marginBottom: cleanCaption ? '6px' : '2px', borderRadius: '8px', overflow: 'hidden' }}>
+                          <div 
+                            onClick={() => setLightboxMedia({
+                              url: m.media_url,
+                              caption: cleanCaption,
+                              time: m.time,
+                              sender: isOutbound ? 'You' : (selectedConvo.name || selectedConvo.phone),
+                              isOutbound
+                            })}
+                            style={{ 
+                              cursor: 'pointer', 
+                              position: 'relative', 
+                              borderRadius: '8px', 
+                              overflow: 'hidden',
+                              background: '#F1F5F9',
+                              border: '1px solid rgba(0, 0, 0, 0.06)'
+                            }}
+                            title="Click to view full photo"
+                          >
                             <img
                               src={m.media_url}
-                              alt="Attached image"
+                              alt={cleanCaption || "WhatsApp Photo"}
                               style={{
                                 maxWidth: '100%',
-                                maxHeight: '320px',
+                                maxHeight: '340px',
                                 objectFit: 'contain',
                                 display: 'block',
                                 borderRadius: '8px',
+                                margin: '0 auto',
                                 cursor: 'pointer'
                               }}
                               loading="lazy"
                             />
-                          </a>
+                            <div style={{
+                              position: 'absolute',
+                              bottom: '6px',
+                              right: '6px',
+                              background: 'rgba(15, 23, 42, 0.65)',
+                              color: '#FFFFFF',
+                              padding: '3px 8px',
+                              borderRadius: '4px',
+                              fontSize: '0.675rem',
+                              fontWeight: 600,
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '4px',
+                              backdropFilter: 'blur(3px)',
+                              boxShadow: '0 2px 4px rgba(0,0,0,0.2)'
+                            }}>
+                              <Maximize2 size={11} /> View Photo
+                            </div>
+                          </div>
+
+                          {cleanCaption && (
+                            <div style={{ 
+                              fontSize: '0.85rem', 
+                              lineHeight: 1.45, 
+                              whiteSpace: 'pre-wrap', 
+                              wordBreak: 'break-word',
+                              color: '#0F172A',
+                              marginTop: '6px',
+                              padding: '0 2px'
+                            }}>
+                              {cleanCaption}
+                            </div>
+                          )}
                         </div>
                       )}
 
                       {/* Preserved Formatted Text with Linebreaks and Spaces */}
-                      {msgText && (
+                      {shouldShowTextBlock && (
                         <div style={{ 
                           fontSize: '0.875rem', 
                           lineHeight: 1.5, 
@@ -1086,6 +1178,164 @@ export default function InboxPage() {
           )}
         </div>
       </div>
+
+      {/* Full-Screen Image Lightbox Modal */}
+      {lightboxMedia && (
+        <div 
+          onClick={() => setLightboxMedia(null)}
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: 'rgba(15, 23, 42, 0.92)',
+            backdropFilter: 'blur(8px)',
+            display: 'flex',
+            flexDirection: 'column',
+            zIndex: 9999,
+            padding: '16px'
+          }}
+        >
+          {/* Lightbox Header Bar */}
+          <div 
+            onClick={e => e.stopPropagation()}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              color: '#FFFFFF',
+              marginBottom: '10px',
+              padding: '6px 12px'
+            }}
+          >
+            <div>
+              <div style={{ fontWeight: 700, fontSize: '0.95rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <ImageIcon size={16} color="var(--brand-wa-light)" />
+                <span>{lightboxMedia.sender}</span>
+              </div>
+              <div style={{ fontSize: '0.75rem', opacity: 0.75, marginTop: '2px' }}>
+                {lightboxMedia.time ? formatIndianTime(lightboxMedia.time) : ''}
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <a
+                href={lightboxMedia.url}
+                download
+                className="btn"
+                style={{
+                  background: 'rgba(255, 255, 255, 0.15)',
+                  color: '#FFFFFF',
+                  border: '1px solid rgba(255, 255, 255, 0.25)',
+                  padding: '7px 12px',
+                  fontSize: '0.78rem',
+                  fontWeight: 600,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  textDecoration: 'none',
+                  borderRadius: '6px',
+                  transition: 'background 0.15s ease'
+                }}
+                title="Download image to device"
+              >
+                <Download size={14} />
+                <span>Download</span>
+              </a>
+
+              <a
+                href={lightboxMedia.url}
+                target="_blank"
+                rel="noreferrer"
+                className="btn"
+                style={{
+                  background: 'rgba(255, 255, 255, 0.15)',
+                  color: '#FFFFFF',
+                  border: '1px solid rgba(255, 255, 255, 0.25)',
+                  padding: '7px 12px',
+                  fontSize: '0.78rem',
+                  fontWeight: 600,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  textDecoration: 'none',
+                  borderRadius: '6px',
+                  transition: 'background 0.15s ease'
+                }}
+                title="Open full resolution in new tab"
+              >
+                <ExternalLink size={14} />
+                <span>Full Size</span>
+              </a>
+
+              <button
+                type="button"
+                onClick={() => setLightboxMedia(null)}
+                style={{
+                  background: 'rgba(255, 255, 255, 0.2)',
+                  border: 'none',
+                  color: '#FFFFFF',
+                  cursor: 'pointer',
+                  width: '36px',
+                  height: '36px',
+                  borderRadius: '50%',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  transition: 'background 0.15s ease'
+                }}
+                title="Close (Esc)"
+              >
+                <X size={20} />
+              </button>
+            </div>
+          </div>
+
+          {/* Lightbox Center Image Canvas */}
+          <div 
+            onClick={e => e.stopPropagation()}
+            style={{
+              flex: 1,
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              overflow: 'hidden'
+            }}
+          >
+            <img
+              src={lightboxMedia.url}
+              alt={lightboxMedia.caption || "WhatsApp Photo"}
+              style={{
+                maxWidth: '92vw',
+                maxHeight: '76vh',
+                objectFit: 'contain',
+                borderRadius: '8px',
+                boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.6)'
+              }}
+            />
+
+            {lightboxMedia.caption && (
+              <div style={{
+                marginTop: '14px',
+                color: '#FFFFFF',
+                background: 'rgba(0, 0, 0, 0.65)',
+                padding: '8px 18px',
+                borderRadius: '8px',
+                maxWidth: '750px',
+                textAlign: 'center',
+                fontSize: '0.9rem',
+                lineHeight: 1.45,
+                backdropFilter: 'blur(4px)',
+                border: '1px solid rgba(255, 255, 255, 0.15)'
+              }}>
+                {lightboxMedia.caption}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

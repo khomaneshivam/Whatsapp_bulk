@@ -4,7 +4,7 @@ const crypto = require("crypto");
 const { db, getSetting, setSetting } = require("../config/database");
 const config = require("../config/env");
 const broadcastEngine = require("./broadcastEngine");
-const { sendTextMessage } = require("./metaWhatsAppService");
+const { sendTextMessage, downloadAndSaveInboundMedia } = require("./metaWhatsAppService");
 
 class WebhookService {
   /**
@@ -244,19 +244,49 @@ class WebhookService {
       }
     }
 
-    // Extract media metadata if incoming message is image or video
+    // Extract media metadata if incoming message is image, video, document, audio, or sticker
+    let incomingMediaId = null;
     let incomingMediaUrl = null;
     let incomingMediaType = null;
     let incomingMediaCaption = null;
+
     if (msgType === "image") {
       incomingMediaType = "image";
+      incomingMediaId = msg.image?.id || null;
       incomingMediaCaption = msg.image?.caption || null;
     } else if (msgType === "video") {
       incomingMediaType = "video";
+      incomingMediaId = msg.video?.id || null;
       incomingMediaCaption = msg.video?.caption || null;
     } else if (msgType === "document") {
       incomingMediaType = "document";
-      incomingMediaCaption = msg.document?.filename || null;
+      incomingMediaId = msg.document?.id || null;
+      incomingMediaCaption = msg.document?.filename || msg.document?.caption || null;
+    } else if (msgType === "audio") {
+      incomingMediaType = "audio";
+      incomingMediaId = msg.audio?.id || null;
+      incomingMediaCaption = msg.audio?.voice ? "Voice Note" : null;
+    } else if (msgType === "sticker") {
+      incomingMediaType = "image";
+      incomingMediaId = msg.sticker?.id || null;
+    }
+
+    if (incomingMediaId) {
+      // Check if file was already downloaded to disk previously
+      try {
+        const inboundDir = path.resolve(__dirname, "../../public/uploads/inbound");
+        if (fs.existsSync(inboundDir)) {
+          const matched = fs.readdirSync(inboundDir).find(f => f.startsWith(`${incomingMediaId}.`));
+          if (matched) {
+            incomingMediaUrl = `/uploads/inbound/${matched}`;
+          }
+        }
+      } catch (e) {}
+
+      // Fallback to proxy route so it can be streamed or downloaded on demand
+      if (!incomingMediaUrl) {
+        incomingMediaUrl = `/api/media/inbound/${incomingMediaId}`;
+      }
     }
 
     const insertStmt = db.prepare(`
@@ -285,6 +315,11 @@ class WebhookService {
 
     console.log(`[Webhook] Saved customer reply #${runResult.lastInsertRowid} from ${fromPhone} (${customerName || "Unknown"}): "${messageBody}"`);
 
+    // If inbound media needs background downloading from Meta
+    if (incomingMediaId && (!incomingMediaUrl || incomingMediaUrl.startsWith("/api/media/inbound/"))) {
+      this.downloadMediaInBackground(runResult.lastInsertRowid, incomingMediaId, incomingMediaType);
+    }
+
     // Fetch saved record with joined campaign name
     const savedRecord = db.prepare(`
       SELECT r.*, c.name as campaign_name 
@@ -294,6 +329,33 @@ class WebhookService {
     `).get(runResult.lastInsertRowid);
 
     return { saved: true, reply: savedRecord };
+  }
+
+  /**
+   * Downloads incoming media asynchronously from Meta and updates customer_replies record
+   */
+  async downloadMediaInBackground(replyId, mediaId, mediaType) {
+    if (!mediaId || !replyId) return;
+    try {
+      const res = await downloadAndSaveInboundMedia(mediaId);
+      if (res && res.relativeUrl) {
+        db.prepare("UPDATE customer_replies SET media_url = ?, media_type = ? WHERE id = ?")
+          .run(res.relativeUrl, mediaType || "image", replyId);
+
+        const updated = db.prepare(`
+          SELECT r.*, c.name as campaign_name 
+          FROM customer_replies r 
+          LEFT JOIN campaigns c ON r.campaign_id = c.id 
+          WHERE r.id = ?
+        `).get(replyId);
+
+        if (updated) {
+          broadcastEngine.emit("webhook:reply_updated", updated);
+        }
+      }
+    } catch (err) {
+      console.warn(`[WebhookService] Background media download for reply #${replyId} (${mediaId}):`, err.message);
+    }
   }
 
   /**
@@ -470,7 +532,25 @@ class WebhookService {
     `;
 
     const dataParams = [...params, parsedLimit, parsedOffset];
-    const replies = db.prepare(dataSql).all(...dataParams);
+    const rawReplies = db.prepare(dataSql).all(...dataParams);
+
+    // Self-healing: if any media message was stored without media_url, extract media ID from raw_payload
+    const replies = rawReplies.map(r => {
+      if (!r.media_url && r.raw_payload) {
+        try {
+          const raw = JSON.parse(r.raw_payload);
+          const mediaObj = raw.image || raw.video || raw.document || raw.audio || raw.sticker;
+          if (mediaObj?.id) {
+            r.media_url = `/api/media/inbound/${mediaObj.id}`;
+            r.media_type = r.message_type || (raw.image ? "image" : (raw.video ? "video" : (raw.document ? "document" : "image")));
+            r.media_caption = r.media_caption || mediaObj.caption || mediaObj.filename || null;
+            db.prepare("UPDATE customer_replies SET media_url = ?, media_type = ? WHERE id = ?")
+              .run(r.media_url, r.media_type, r.id);
+          }
+        } catch (e) {}
+      }
+      return r;
+    });
 
     return {
       replies,
@@ -523,9 +603,36 @@ class WebhookService {
   /**
    * Simulates an incoming customer reply for testing without requiring a public webhook URL
    */
-  simulateTestReply({ fromPhone = "919876543210", customerName = "Test Customer", messageBody = "Yes, I am interested! Please send more details.", campaignId = null }) {
+  simulateTestReply({ 
+    fromPhone = "919876543210", 
+    customerName = "Test Customer", 
+    messageBody = "Yes, I am interested! Please send more details.", 
+    campaignId = null,
+    messageType = "text",
+    mediaUrl = null,
+    mediaId = null
+  }) {
     const fakeWaId = `wamid.SIMULATED_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     const cleanPhone = String(fromPhone).replace(/\D/g, "");
+    const msgType = (messageType || (mediaUrl ? "image" : "text")).toLowerCase();
+    const isImage = msgType === "image";
+
+    const fakeMsg = {
+      from: cleanPhone,
+      id: fakeWaId,
+      timestamp: String(Math.floor(Date.now() / 1000)),
+      type: msgType
+    };
+
+    if (isImage) {
+      fakeMsg.image = {
+        caption: messageBody || "Simulated photo",
+        mime_type: "image/jpeg",
+        id: mediaId || `sim_img_${Date.now()}`
+      };
+    } else {
+      fakeMsg.text = { body: messageBody };
+    }
 
     const fakePayload = {
       object: "whatsapp_business_account",
@@ -542,15 +649,7 @@ class WebhookService {
                     wa_id: cleanPhone
                   }
                 ],
-                messages: [
-                  {
-                    from: cleanPhone,
-                    id: fakeWaId,
-                    timestamp: String(Math.floor(Date.now() / 1000)),
-                    type: "text",
-                    text: { body: messageBody }
-                  }
-                ]
+                messages: [fakeMsg]
               },
               field: "messages"
             }
@@ -559,7 +658,14 @@ class WebhookService {
       ]
     };
 
-    return this.processIncomingPayload(fakePayload);
+    const res = this.processIncomingPayload(fakePayload);
+    if (mediaUrl) {
+      try {
+        db.prepare("UPDATE customer_replies SET media_url = ?, media_type = 'image' WHERE wa_message_id = ?")
+          .run(mediaUrl, fakeWaId);
+      } catch (e) {}
+    }
+    return res;
   }
 
   /**

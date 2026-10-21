@@ -285,9 +285,9 @@ function deleteConversation(req, res) {
  */
 function simulateTestReply(req, res) {
   try {
-    const { fromPhone, customerName, messageBody, campaignId } = req.body || {};
+    const { fromPhone, customerName, messageBody, campaignId, messageType, mediaUrl, mediaId } = req.body || {};
 
-    const cleanBody = messageBody || "Hello, I am interested! Please share the details.";
+    const cleanBody = messageBody || (messageType === "image" ? "Here is the payment screenshot" : "Hello, I am interested! Please share the details.");
     const cleanPhone = fromPhone || "919876543210";
     const cleanName = customerName || "Demo Customer";
 
@@ -295,7 +295,10 @@ function simulateTestReply(req, res) {
       fromPhone: cleanPhone,
       customerName: cleanName,
       messageBody: cleanBody,
-      campaignId: campaignId || null
+      campaignId: campaignId || null,
+      messageType: messageType || (mediaUrl ? "image" : "text"),
+      mediaUrl: mediaUrl || null,
+      mediaId: mediaId || null
     });
 
     return res.status(200).json({

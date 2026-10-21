@@ -1,3 +1,5 @@
+const fs = require("fs");
+const path = require("path");
 const { getSetting, db } = require("../config/database");
 const config = require("../config/env");
 
@@ -671,6 +673,144 @@ async function sendMediaMessage({ to, type = "image", mediaId, mediaUrl, caption
   };
 }
 
+/**
+ * Retrieves media metadata and temporary download URL from Meta Graph API
+ */
+async function getMediaDetails(mediaId, customCredentials = null) {
+  if (!mediaId) {
+    throw new Error("Media ID is required to fetch media details from Meta.");
+  }
+  const creds = customCredentials || getActiveCredentials();
+  const url = `${META_BASE_URL}/${mediaId}`;
+
+  const res = await fetch(url, {
+    method: "GET",
+    headers: {
+      "Authorization": `Bearer ${creds.token}`
+    }
+  });
+
+  const data = await res.json();
+  if (!res.ok) {
+    throw parseMetaError(data, res.status);
+  }
+
+  return {
+    id: data.id,
+    url: data.url,
+    mimeType: data.mime_type,
+    sha256: data.sha256,
+    fileSize: data.file_size
+  };
+}
+
+/**
+ * Downloads binary media buffer from Meta lookaside download URL
+ */
+async function downloadMediaBuffer(downloadUrl, customCredentials = null) {
+  if (!downloadUrl) {
+    throw new Error("Download URL is required to download media.");
+  }
+  const creds = customCredentials || getActiveCredentials();
+
+  const res = await fetch(downloadUrl, {
+    method: "GET",
+    headers: {
+      "Authorization": `Bearer ${creds.token}`,
+      "User-Agent": "curl/7.64.1"
+    }
+  });
+
+  if (!res.ok) {
+    throw new Error(`Failed to download media content from Meta (HTTP ${res.status}): ${res.statusText}`);
+  }
+
+  const arrayBuffer = await res.arrayBuffer();
+  const buffer = Buffer.from(arrayBuffer);
+  const contentType = res.headers.get("content-type") || "application/octet-stream";
+
+  return {
+    buffer,
+    contentType,
+    contentLength: buffer.length
+  };
+}
+
+/**
+ * Downloads and stores inbound media locally in public/uploads/inbound/
+ * Returns { success, relativeUrl, localPath, mimeType, fileSize }
+ */
+async function downloadAndSaveInboundMedia(mediaId, customCredentials = null) {
+  if (!mediaId) {
+    throw new Error("mediaId is required for downloadAndSaveInboundMedia");
+  }
+
+  const inboundDir = path.resolve(__dirname, "../../public/uploads/inbound");
+  if (!fs.existsSync(inboundDir)) {
+    fs.mkdirSync(inboundDir, { recursive: true });
+  }
+
+  // 1. Check if already downloaded on disk (matching mediaId.*)
+  try {
+    const existingFiles = fs.readdirSync(inboundDir).filter(f => f.startsWith(`${mediaId}.`));
+    if (existingFiles.length > 0) {
+      const filename = existingFiles[0];
+      const localPath = path.join(inboundDir, filename);
+      const stats = fs.statSync(localPath);
+      if (stats.size > 0) {
+        return {
+          success: true,
+          cached: true,
+          relativeUrl: `/uploads/inbound/${filename}`,
+          localPath,
+          fileSize: stats.size
+        };
+      }
+    }
+  } catch (e) {
+    // Continue if readdir fails
+  }
+
+  // 2. Fetch metadata from Meta
+  const mediaInfo = await getMediaDetails(mediaId, customCredentials);
+  if (!mediaInfo.url) {
+    throw new Error(`Meta did not return a valid download URL for media ${mediaId}`);
+  }
+
+  // 3. Download binary buffer
+  const downloaded = await downloadMediaBuffer(mediaInfo.url, customCredentials);
+
+  // 4. Resolve extension from mimeType
+  const mimeType = (mediaInfo.mimeType || downloaded.contentType || "image/jpeg").toLowerCase();
+  let ext = ".jpg";
+  if (mimeType.includes("png")) ext = ".png";
+  else if (mimeType.includes("webp")) ext = ".webp";
+  else if (mimeType.includes("gif")) ext = ".gif";
+  else if (mimeType.includes("mp4")) ext = ".mp4";
+  else if (mimeType.includes("3gpp") || mimeType.includes("3gp")) ext = ".3gp";
+  else if (mimeType.includes("quicktime") || mimeType.includes("mov")) ext = ".mov";
+  else if (mimeType.includes("webm")) ext = ".webm";
+  else if (mimeType.includes("ogg") || mimeType.includes("opus")) ext = ".ogg";
+  else if (mimeType.includes("mpeg") || mimeType.includes("mp3")) ext = ".mp3";
+  else if (mimeType.includes("aac")) ext = ".aac";
+  else if (mimeType.includes("pdf")) ext = ".pdf";
+  else if (mimeType.includes("plain")) ext = ".txt";
+
+  const filename = `${mediaId}${ext}`;
+  const localPath = path.join(inboundDir, filename);
+
+  fs.writeFileSync(localPath, downloaded.buffer);
+
+  return {
+    success: true,
+    cached: false,
+    relativeUrl: `/uploads/inbound/${filename}`,
+    localPath,
+    mimeType,
+    fileSize: downloaded.contentLength
+  };
+}
+
 module.exports = {
   getActiveCredentials,
   testConnection,
@@ -682,7 +822,10 @@ module.exports = {
   sendTemplateMessage,
   sendTextMessage,
   sendMediaMessage,
-  uploadMedia
+  uploadMedia,
+  getMediaDetails,
+  downloadMediaBuffer,
+  downloadAndSaveInboundMedia
 };
 
 
