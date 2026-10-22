@@ -529,9 +529,10 @@ class WebhookService {
   /**
    * Retrieves customer replies and outbound broadcast messages with filtering, searching, and pagination
    */
-  getReplies({ limit = 50, offset = 0, search = "", campaignId = "", unreadOnly = false, userId = null }) {
+  getReplies({ limit = 50, offset = 0, search = "", campaignId = "", unreadOnly = false, userId = null, repliesOnly = true }) {
     const parsedLimit = Math.min(Math.max(parseInt(limit, 10) || 50, 1), 2000);
     const parsedOffset = Math.max(parseInt(offset, 10) || 0, 0);
+    const onlyWithReplies = repliesOnly === undefined ? true : (repliesOnly === true || repliesOnly === "true" || repliesOnly === "1" || repliesOnly === 1);
 
     const conditions = [];
     const params = [];
@@ -559,6 +560,11 @@ class WebhookService {
 
     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
 
+    // 2-Way Inbox scoping: when onlyWithReplies is true, only include broadcast dispatches for contacts who actually replied
+    const repliesFilterClause = onlyWithReplies
+      ? "AND cr.clean_phone IN (SELECT from_phone FROM customer_replies WHERE message_type != 'outbound')"
+      : "";
+
     const cteSql = `
       WITH combined_messages AS (
         SELECT 
@@ -581,7 +587,10 @@ class WebhookService {
           r.media_caption as media_caption,
           r.user_id as user_id,
           c.name as campaign_name,
-          c.user_id as campaign_user_id
+          c.user_id as campaign_user_id,
+          c.template_name as template_name,
+          c.message_body as campaign_message_body,
+          NULL as recipient_raw_data
         FROM customer_replies r
         LEFT JOIN campaigns c ON r.campaign_id = c.id
 
@@ -607,10 +616,14 @@ class WebhookService {
           NULL as media_caption,
           c.user_id as user_id,
           c.name as campaign_name,
-          c.user_id as campaign_user_id
+          c.user_id as campaign_user_id,
+          c.template_name as template_name,
+          c.message_body as campaign_message_body,
+          cr.raw_data as recipient_raw_data
         FROM campaign_recipients cr
         LEFT JOIN campaigns c ON cr.campaign_id = c.id
         WHERE cr.status IN ('SENT', 'DELIVERED', 'READ') AND cr.sent_at IS NOT NULL
+        ${repliesFilterClause}
       )
     `;
 
@@ -651,27 +664,127 @@ class WebhookService {
     const dataParams = [...params, parsedLimit, parsedOffset];
     const rawReplies = db.prepare(dataSql).all(...dataParams);
 
+    // Cache templates for high-speed message text reconstruction
+    const templateMap = new Map();
+    try {
+      const tpls = db.prepare("SELECT name, body_text FROM templates").all();
+      for (const t of tpls) {
+        if (t.name && t.body_text) {
+          templateMap.set(t.name.trim().toLowerCase(), t.body_text);
+        }
+      }
+    } catch (e) {}
+
+    // Helper to resolve the proper rendered message text (never the campaign name)
+    function resolveProperMessage(r) {
+      const rawBody = (r.message_body || "").trim();
+
+      // 1. If message_body is already clean human-readable text
+      if (rawBody && !rawBody.startsWith("[") && !rawBody.startsWith("{") && !rawBody.startsWith("📢 Broadcast:")) {
+        const oldPrefixMatch = rawBody.match(/^📢\s*[^:]+:\s*(.+)$/s);
+        if (oldPrefixMatch) {
+          return oldPrefixMatch[1].trim();
+        }
+        return rawBody;
+      }
+
+      // 2. Lookup template body text
+      let tplBody = null;
+      if (r.template_name) {
+        tplBody = templateMap.get(r.template_name.trim().toLowerCase());
+        if (!tplBody && r.template_name.toLowerCase().includes("restaurant")) {
+          tplBody = templateMap.get("kt_restaurant_invitation");
+        }
+      }
+
+      // Extract parameter values from JSON components or row data
+      const paramValues = [];
+      let rowData = {};
+
+      if (r.recipient_raw_data) {
+        try {
+          rowData = typeof r.recipient_raw_data === "string" ? JSON.parse(r.recipient_raw_data) : r.recipient_raw_data;
+        } catch (e) {}
+      }
+      if (!Object.keys(rowData).length && r.raw_payload) {
+        try {
+          rowData = typeof r.raw_payload === "string" ? JSON.parse(r.raw_payload) : r.raw_payload;
+        } catch (e) {}
+      }
+
+      if (rawBody.startsWith("[") || rawBody.startsWith("{")) {
+        try {
+          const parsed = JSON.parse(rawBody);
+          if (Array.isArray(parsed)) {
+            const bodyComp = parsed.find(comp => comp.type === "body");
+            if (bodyComp && Array.isArray(bodyComp.parameters)) {
+              bodyComp.parameters.forEach(p => {
+                if (p.text !== undefined && p.text !== null) paramValues.push(String(p.text));
+              });
+            }
+          }
+        } catch (e) {}
+      }
+
+      // 3. Reconstruct message from template text
+      if (tplBody) {
+        let rendered = tplBody;
+
+        // Positional {{1}}, {{2}}, {{3}}
+        if (paramValues.length > 0) {
+          paramValues.forEach((val, idx) => {
+            const placeholderRegex = new RegExp(`\\{\\{${idx + 1}\\}\\}`, "g");
+            rendered = rendered.replace(placeholderRegex, val);
+          });
+        }
+
+        // Named variables from row data
+        if (rowData && typeof rowData === "object") {
+          for (const [k, v] of Object.entries(rowData)) {
+            if (v !== undefined && v !== null && String(v).trim()) {
+              const namedRegex = new RegExp(`\\{\\{${k}\\}\\}`, "gi");
+              rendered = rendered.replace(namedRegex, String(v));
+            }
+          }
+        }
+
+        // Contact name fallback
+        if (r.customer_name && r.customer_name !== "Guest" && r.customer_name !== "Customer") {
+          rendered = rendered.replace(/\{\{1\}\}/g, r.customer_name);
+          rendered = rendered.replace(/\{\{name\}\}/gi, r.customer_name);
+        }
+
+        // Safe defaults for unmapped template variables
+        rendered = rendered.replace(/\{\{restaurant\}\}/gi, "our partner restaurant");
+        rendered = rendered.replace(/\{\{link\}\}/gi, "https://konkantrip.com/");
+        rendered = rendered.replace(/\{\{\d+\}\}/g, "");
+
+        return rendered.trim();
+      }
+
+      // 4. Custom campaign message_body (for freeform campaigns)
+      if (r.campaign_message_body && r.campaign_message_body.trim()) {
+        let rendered = r.campaign_message_body.trim();
+        if (r.customer_name) {
+          rendered = rendered.replace(/\{\{name\}\}/gi, r.customer_name);
+          rendered = rendered.replace(/\{\{1\}\}/g, r.customer_name);
+        }
+        return rendered;
+      }
+
+      // 5. Clean parameter values fallback
+      if (paramValues.length > 0) {
+        return paramValues.join(" • ");
+      }
+
+      return "WhatsApp broadcast message sent";
+    }
+
     // Format outbound broadcast messages and heal missing media URLs
     const replies = rawReplies.map(r => {
       // Clean display text for outbound broadcast recipients
-      if (r.message_type === "outbound" && (!r.message_body || !r.message_body.trim() || r.message_body.startsWith("[") || r.message_body.startsWith("{"))) {
-        const trimmed = (r.message_body || "").trim();
-        let formatted = null;
-        if (trimmed.startsWith("[") || trimmed.startsWith("{")) {
-          try {
-            const parsed = JSON.parse(trimmed);
-            if (Array.isArray(parsed)) {
-              const bodyComp = parsed.find(comp => comp.type === "body");
-              if (bodyComp && Array.isArray(bodyComp.parameters)) {
-                const texts = bodyComp.parameters.map(p => p.text).filter(Boolean);
-                if (texts.length > 0) {
-                  formatted = `📢 ${r.campaign_name || "Broadcast"}: ${texts.join(" • ")}`;
-                }
-              }
-            }
-          } catch (e) {}
-        }
-        r.message_body = formatted || (r.campaign_name ? `📢 Broadcast: ${r.campaign_name}` : "WhatsApp Broadcast Message");
+      if (r.message_type === "outbound") {
+        r.message_body = resolveProperMessage(r);
       }
 
       // Self-healing: if any media message was stored without media_url, extract media ID from raw_payload

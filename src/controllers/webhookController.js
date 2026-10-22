@@ -258,7 +258,7 @@ function saveToken(req, res) {
  */
 function listReplies(req, res) {
   try {
-    const { limit, offset, search, campaignId, unreadOnly, userId } = req.query;
+    const { limit, offset, search, campaignId, unreadOnly, userId, repliesOnly } = req.query;
     let targetUserId = null;
     if (req.user?.role !== "ADMIN") {
       targetUserId = req.user.id;
@@ -272,7 +272,8 @@ function listReplies(req, res) {
       search,
       campaignId,
       unreadOnly,
-      userId: targetUserId
+      userId: targetUserId,
+      repliesOnly
     });
 
     return res.status(200).json({

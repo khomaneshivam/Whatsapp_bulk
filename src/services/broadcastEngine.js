@@ -239,6 +239,59 @@ class BroadcastEngine extends EventEmitter {
   }
 
   /**
+   * Interpolates template body_text into human-readable text for recipient audit and inbox logs
+   */
+  renderReadableTemplate(templateName, components, rowData = {}, contactName = "") {
+    try {
+      let tplRow = db.prepare("SELECT * FROM templates WHERE name = ? OR meta_id = ? OR id = ? LIMIT 1").get(templateName, templateName, templateName);
+      if (!tplRow && templateName && templateName.includes("restaurant")) {
+        tplRow = db.prepare("SELECT * FROM templates WHERE name = 'kt_restaurant_invitation' LIMIT 1").get();
+      }
+      if (!tplRow || !tplRow.body_text) return null;
+
+      let text = tplRow.body_text;
+
+      // Extract parameter values from components
+      if (Array.isArray(components)) {
+        const bodyComp = components.find(c => c.type === "body");
+        if (bodyComp && Array.isArray(bodyComp.parameters)) {
+          bodyComp.parameters.forEach((p, idx) => {
+            const val = p.text !== undefined && p.text !== null ? String(p.text) : "";
+            const paramName = p.parameter_name;
+            if (paramName) {
+              text = text.replace(new RegExp(`\\{\\{${paramName}\\}\\}`, "gi"), val);
+            }
+            text = text.replace(new RegExp(`\\{\\{${idx + 1}\\}\\}`, "g"), val);
+          });
+        }
+      }
+
+      // Also replace named variables from rowData
+      if (rowData && typeof rowData === "object") {
+        for (const [k, v] of Object.entries(rowData)) {
+          if (v !== undefined && v !== null && String(v).trim()) {
+            text = text.replace(new RegExp(`\\{\\{${k}\\}\\}`, "gi"), String(v));
+          }
+        }
+      }
+
+      // Replace common fallback variables
+      if (contactName) {
+        text = text.replace(/\{\{1\}\}/g, contactName);
+        text = text.replace(/\{\{name\}\}/gi, contactName);
+      }
+
+      text = text.replace(/\{\{restaurant\}\}/gi, "our partner restaurant");
+      text = text.replace(/\{\{link\}\}/gi, "https://konkantrip.com/");
+      text = text.replace(/\{\{\d+\}\}/g, "");
+
+      return text.trim();
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /**
    * Starts or resumes a broadcast campaign
    */
   async startCampaign(campaignId, overrideDelayMs = null) {
@@ -490,7 +543,8 @@ class BroadcastEngine extends EventEmitter {
                 }
 
                 const components = this.buildTemplateComponents(mappingConfig, rowData, tplName);
-                renderedContent = JSON.stringify(components);
+                const readableText = this.renderReadableTemplate(tplName, components, rowData, recipient.contact_name);
+                renderedContent = readableText || JSON.stringify(components);
 
                 sendResult = await metaWhatsAppService.sendTemplateMessage({
                   to: recipient.clean_phone,

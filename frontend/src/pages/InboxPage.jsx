@@ -272,6 +272,7 @@ export default function InboxPage() {
   const [replyText, setReplyText] = useState('');
   const [sendingReply, setSendingReply] = useState(false);
   const [search, setSearch] = useState('');
+  const [convoFilter, setConvoFilter] = useState('replies'); // 'replies' | 'all' | 'unread'
   const [loading, setLoading] = useState(true);
 
   // Media attachment states (Images & Videos)
@@ -336,14 +337,14 @@ export default function InboxPage() {
   const [autoReplySaveSuccess, setAutoReplySaveSuccess] = useState(false);
 
   useEffect(() => {
-    loadInbox(false);
+    loadInbox(false, convoFilter);
     loadAutoReplySettings();
     // Background auto-refresh polling every 8 seconds
     const interval = setInterval(() => {
-      loadInbox(true);
+      loadInbox(true, convoFilter);
     }, 8000);
     return () => clearInterval(interval);
-  }, [token]);
+  }, [token, convoFilter]);
 
   async function loadAutoReplySettings() {
     try {
@@ -404,10 +405,11 @@ export default function InboxPage() {
     }
   }, [selectedConvo?.phone]);
 
-  async function loadInbox(silent = false) {
+  async function loadInbox(silent = false, filterMode = convoFilter) {
     if (!silent) setLoading(true);
     try {
-      const res = await fetch('/api/inbox/replies?limit=1000', {
+      const repliesOnlyParam = filterMode === 'all' ? 'false' : 'true';
+      const res = await fetch(`/api/inbox/replies?limit=1000&repliesOnly=${repliesOnlyParam}`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       const data = await res.json();
@@ -473,7 +475,8 @@ export default function InboxPage() {
               media_caption: resolvedCaption,
               time: r.received_at,
               is_outbound: true,
-              status: r.reply_status || 'SENT'
+              status: r.reply_status || 'SENT',
+              campaign_name: r.campaign_name || null
             });
           } else {
             const isMediaMsg = Boolean(resolvedMediaUrl || rawMediaId || r.message_type === 'image' || r.message_type === 'video');
@@ -803,11 +806,25 @@ export default function InboxPage() {
     }
   }
 
-  const filteredConvos = conversations.filter(c => 
-    (c.name || '').toLowerCase().includes(search.toLowerCase()) || 
-    (c.phone || '').includes(search) ||
-    (c.lastMessage || '').toLowerCase().includes(search.toLowerCase())
-  );
+  const repliesCount = conversations.filter(c => c.messages.some(m => !m.is_outbound)).length;
+  const unreadCount = conversations.filter(c => c.unreadCount > 0).length;
+  const allCount = conversations.length;
+
+  const filteredConvos = conversations.filter(c => {
+    const matchesSearch = 
+      (c.name || '').toLowerCase().includes(search.toLowerCase()) || 
+      (c.phone || '').includes(search) ||
+      (c.lastMessage || '').toLowerCase().includes(search.toLowerCase());
+    if (!matchesSearch) return false;
+
+    if (convoFilter === 'replies') {
+      return c.messages.some(m => !m.is_outbound);
+    }
+    if (convoFilter === 'unread') {
+      return c.unreadCount > 0;
+    }
+    return true; // 'all'
+  });
 
   return (
     <div style={{ maxWidth: '1440px', margin: '0 auto', padding: '24px 20px' }}>
@@ -891,7 +908,7 @@ export default function InboxPage() {
         
         {/* Left Pane: Conversation List */}
         <div className="inbox-list-pane">
-          {/* Search Bar */}
+          {/* Search Bar & Conversation Filters */}
           <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--border-color)', background: '#FFFFFF' }}>
             <div style={{ position: 'relative' }}>
               <input
@@ -924,6 +941,114 @@ export default function InboxPage() {
                   <X size={14} />
                 </button>
               )}
+            </div>
+
+            {/* Conversation Mode Filter Pills */}
+            <div style={{ display: 'flex', gap: '6px', marginTop: '10px' }}>
+              <button
+                type="button"
+                onClick={() => setConvoFilter('replies')}
+                style={{
+                  flex: 1,
+                  padding: '6px 8px',
+                  fontSize: '0.75rem',
+                  fontWeight: convoFilter === 'replies' ? 700 : 500,
+                  borderRadius: '6px',
+                  border: convoFilter === 'replies' ? '1px solid #86EFAC' : '1px solid #E2E8F0',
+                  background: convoFilter === 'replies' ? '#DCFCE7' : '#F8FAFC',
+                  color: convoFilter === 'replies' ? '#15803D' : '#64748B',
+                  cursor: 'pointer',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '5px',
+                  transition: 'all 0.15s ease'
+                }}
+              >
+                <span>Replies</span>
+                {repliesCount > 0 && (
+                  <span style={{
+                    fontSize: '0.675rem',
+                    background: convoFilter === 'replies' ? '#15803D' : '#94A3B8',
+                    color: '#FFFFFF',
+                    padding: '1px 5px',
+                    borderRadius: '10px',
+                    fontWeight: 700
+                  }}>
+                    {repliesCount}
+                  </span>
+                )}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setConvoFilter('all')}
+                style={{
+                  flex: 1,
+                  padding: '6px 8px',
+                  fontSize: '0.75rem',
+                  fontWeight: convoFilter === 'all' ? 700 : 500,
+                  borderRadius: '6px',
+                  border: convoFilter === 'all' ? '1px solid #86EFAC' : '1px solid #E2E8F0',
+                  background: convoFilter === 'all' ? '#DCFCE7' : '#F8FAFC',
+                  color: convoFilter === 'all' ? '#15803D' : '#64748B',
+                  cursor: 'pointer',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '5px',
+                  transition: 'all 0.15s ease'
+                }}
+              >
+                <span>All Chats</span>
+                {allCount > 0 && (
+                  <span style={{
+                    fontSize: '0.675rem',
+                    background: convoFilter === 'all' ? '#15803D' : '#94A3B8',
+                    color: '#FFFFFF',
+                    padding: '1px 5px',
+                    borderRadius: '10px',
+                    fontWeight: 700
+                  }}>
+                    {allCount}
+                  </span>
+                )}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setConvoFilter('unread')}
+                style={{
+                  flex: 1,
+                  padding: '6px 8px',
+                  fontSize: '0.75rem',
+                  fontWeight: convoFilter === 'unread' ? 700 : 500,
+                  borderRadius: '6px',
+                  border: convoFilter === 'unread' ? '1px solid #FECACA' : '1px solid #E2E8F0',
+                  background: convoFilter === 'unread' ? '#FEF2F2' : '#F8FAFC',
+                  color: convoFilter === 'unread' ? '#B91C1C' : '#64748B',
+                  cursor: 'pointer',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '5px',
+                  transition: 'all 0.15s ease'
+                }}
+              >
+                <span>Unread</span>
+                {unreadCount > 0 && (
+                  <span style={{
+                    fontSize: '0.675rem',
+                    background: '#DC2626',
+                    color: '#FFFFFF',
+                    padding: '1px 5px',
+                    borderRadius: '10px',
+                    fontWeight: 700
+                  }}>
+                    {unreadCount}
+                  </span>
+                )}
+              </button>
             </div>
           </div>
 
@@ -1180,7 +1305,10 @@ export default function InboxPage() {
                   const displayTime = m.time ? formatIndianTime(m.time) : '';
                   const isVideo = m.media_type === 'video' || (m.media_url && /\.(mp4|3gp|mov|webm)(\?.*)?$/i.test(m.media_url));
                   const isImage = m.media_type === 'image' || (m.media_url && !isVideo) || Boolean(m.media_id);
-                  const msgText = m.text || m.message_body || m.message_text || '';
+                  let msgText = m.text || m.message_body || m.message_text || '';
+                  if (msgText && typeof msgText === 'string' && msgText.startsWith('📢 Broadcast:')) {
+                    msgText = msgText.replace(/^📢 Broadcast:\s*/i, '');
+                  }
 
                   // Extract clean caption: strip generic placeholders
                   let cleanCaption = m.media_caption || '';
@@ -1213,6 +1341,24 @@ export default function InboxPage() {
                       {m.is_auto && (
                         <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.68rem', fontWeight: 700, color: '#16A34A', marginBottom: '6px', padding: isImage ? '4px 6px 0 6px' : '0' }}>
                           <Sparkles size={11} /> Auto-Reply Bot
+                        </div>
+                      )}
+
+                      {m.campaign_name && isOutbound && !m.is_auto && (
+                        <div style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '4px',
+                          fontSize: '0.68rem',
+                          fontWeight: 600,
+                          color: '#047857',
+                          background: '#ECFDF5',
+                          border: '1px solid #A7F3D0',
+                          padding: '2px 7px',
+                          borderRadius: '6px',
+                          marginBottom: '6px'
+                        }}>
+                          <span>📢 Campaign: {m.campaign_name}</span>
                         </div>
                       )}
 
