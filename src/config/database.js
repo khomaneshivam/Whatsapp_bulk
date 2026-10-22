@@ -433,23 +433,14 @@ function initializeDatabase() {
     console.warn("[DB Seed] templates seed check:", tplSeedErr.message);
   }
 
-  // Seed default admin user if users table is empty (Development only)
+  // Admin User Bootstrap Notice
   try {
     const userCount = db.prepare("SELECT COUNT(*) as count FROM users").get()?.count || 0;
     if (userCount === 0) {
-      if (process.env.NODE_ENV === "production") {
-        console.log("[Security] Production startup: No users found. First registered user will be assigned Master Administrator role.");
-      } else {
-        const defaultHash = bcrypt.hashSync("admin123", 10);
-        db.prepare(`
-          INSERT INTO users (id, name, email, phone, password_hash, role, status)
-          VALUES ('admin_root', 'Shivam Khomane', 'khomaneshivam@gmail.com', '9307382030', ?, 'ADMIN', 'ACTIVE')
-        `).run(defaultHash);
-        console.log("[DB Seed] Development admin user seeded ('admin_root'). Change password immediately in production.");
-      }
+      console.log("[Security] Platform initialized with 0 users. First user to register will be designated Master Administrator.");
     }
   } catch (userSeedErr) {
-    console.warn("[DB Seed] user seed check:", userSeedErr.message);
+    console.warn("[DB Init] user check:", userSeedErr.message);
   }
 
   // Seed default settings if not exists
@@ -469,10 +460,24 @@ function initializeDatabase() {
     setSetting.run("BROADCAST_DELAY_MS", String(config.BROADCAST_DELAY_MS));
   }
   if (!getSetting.get("WHATSAPP_TEMPLATE_ID")) {
-    setSetting.run("WHATSAPP_TEMPLATE_ID", config.WHATSAPP_TEMPLATE_ID || "1757343188867100");
+    setSetting.run("WHATSAPP_TEMPLATE_ID", config.WHATSAPP_TEMPLATE_ID || "");
   }
   if (!getSetting.get("DEFAULT_TEMPLATE_NAME")) {
     setSetting.run("DEFAULT_TEMPLATE_NAME", config.DEFAULT_TEMPLATE_NAME || "kt_restaurant_invitation");
+  }
+
+  // Auto-heal legacy unassigned records to primary Master Admin
+  try {
+    const primaryAdmin = db.prepare("SELECT id FROM users WHERE role = 'ADMIN' ORDER BY created_at ASC LIMIT 1").get();
+    if (primaryAdmin && primaryAdmin.id) {
+      const adminId = primaryAdmin.id;
+      db.prepare("UPDATE campaigns SET user_id = ? WHERE user_id IS NULL OR user_id = '' OR user_id = 'admin_root'").run(adminId);
+      db.prepare("UPDATE customer_replies SET user_id = ? WHERE user_id IS NULL OR user_id = '' OR user_id = 'admin_root'").run(adminId);
+      db.prepare("UPDATE automated_booking_dispatches SET user_id = ? WHERE user_id IS NULL OR user_id = '' OR user_id = 'admin_root'").run(adminId);
+      db.prepare("UPDATE automated_booking_contacts SET user_id = ? WHERE user_id IS NULL OR user_id = '' OR user_id = 'admin_root'").run(adminId);
+    }
+  } catch (migErr) {
+    console.warn("[DB Migration] Legacy ownership migration check:", migErr.message);
   }
   if (!getSetting.get("DEFAULT_TEMPLATE_LANG")) {
     setSetting.run("DEFAULT_TEMPLATE_LANG", config.DEFAULT_TEMPLATE_LANG || "en");

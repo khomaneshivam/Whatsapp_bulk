@@ -11,7 +11,7 @@ function checkCampaignAccess(campaign, user) {
   if (!user) {
     return { allowed: false, status: 401, message: "Authentication required." };
   }
-  if (user.role === "ADMIN" || !campaign.user_id || campaign.user_id === "admin_root") {
+  if (user.role === "ADMIN" || campaign.user_id === user.id) {
     return { allowed: true };
   }
   if (campaign.user_id !== user.id) {
@@ -44,9 +44,9 @@ async function listCampaigns(req, res) {
 
     const params = [];
 
-    // Non-admin users see their campaigns and legacy/unassigned campaigns
+    // Non-admin users strictly see only their own campaigns
     if (user.role !== "ADMIN") {
-      sql += " WHERE (c.user_id = ? OR c.user_id IS NULL OR c.user_id = 'admin_root')";
+      sql += " WHERE c.user_id = ?";
       params.push(user.id);
     } else {
       // Admins see all historical campaigns by default; can optionally filter by target userId if requested

@@ -66,10 +66,11 @@ async function register(req, res) {
       const userCount = db.prepare("SELECT COUNT(*) as count FROM users").get().count;
       if (configuredBootstrapToken && bootstrapToken === configuredBootstrapToken) {
         role = "ADMIN";
-      } else if (cleanEmail === "khomaneshivam@gmail.com" || cleanEmail.includes("admin")) {
+      } else if (userCount === 0) {
+        // The first registered user in the platform is always Master Administrator
         role = "ADMIN";
       } else {
-        role = userCount === 0 ? "ADMIN" : "USER";
+        role = "USER";
       }
 
       const defaultPhone = db.prepare("SELECT id FROM waba_phone_numbers WHERE is_default = 1 LIMIT 1").get();
@@ -418,11 +419,11 @@ async function resetPassword(req, res) {
       // Invalidate recovery code
       db.prepare("UPDATE password_resets SET used = 1 WHERE id = ?").run(resetRecord.id);
 
-      // If user is ADMIN or primary owner, backfill unassigned history
-      if (user.role === "ADMIN" || user.email === "khomaneshivam@gmail.com") {
-        db.prepare("UPDATE customer_replies SET user_id = ? WHERE user_id IS NULL").run(user.id);
-        db.prepare("UPDATE campaigns SET user_id = ? WHERE user_id IS NULL").run(user.id);
-        db.prepare("UPDATE automated_booking_dispatches SET user_id = ? WHERE user_id IS NULL").run(user.id);
+      // If user is ADMIN, backfill any legacy unassigned records
+      if (user.role === "ADMIN") {
+        db.prepare("UPDATE customer_replies SET user_id = ? WHERE user_id IS NULL OR user_id = '' OR user_id = 'admin_root'").run(user.id);
+        db.prepare("UPDATE campaigns SET user_id = ? WHERE user_id IS NULL OR user_id = '' OR user_id = 'admin_root'").run(user.id);
+        db.prepare("UPDATE automated_booking_dispatches SET user_id = ? WHERE user_id IS NULL OR user_id = '' OR user_id = 'admin_root'").run(user.id);
       }
 
       db.exec("COMMIT;");

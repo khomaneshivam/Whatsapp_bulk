@@ -78,11 +78,11 @@ async function updateSettings(req, res) {
       META_APP_SECRET
     ].some(v => v !== undefined);
 
-    // Only administrators are permitted to alter platform-wide credentials
-    if (credentialKeysProvided && user.role !== "ADMIN") {
+    // Only administrators are permitted to alter platform-wide settings
+    if (user.role !== "ADMIN") {
       return res.status(403).json({
         success: false,
-        message: "Forbidden. Platform credentials can only be modified by Master Administrators."
+        message: "Forbidden. Platform settings can only be modified by Master Administrators."
       });
     }
 

@@ -42,15 +42,15 @@ router.get("/admin/unassigned-summary", authenticateToken, requireAdmin, adminCo
 router.post("/admin/impersonate/:userId", authenticateToken, requireAdmin, adminController.impersonateUser);
 router.get("/admin/overview", authenticateToken, requireAdmin, adminController.getSystemOverview);
 
-// WhatsApp Phone Number Registry (Protected)
+// WhatsApp Phone Number Registry (Protected & Admin Only for mutations)
 router.get("/admin/phone-numbers", authenticateToken, adminController.listPhoneNumbers);
-router.post("/admin/phone-numbers", authenticateToken, adminController.registerPhoneNumber);
+router.post("/admin/phone-numbers", authenticateToken, requireAdmin, adminController.registerPhoneNumber);
 router.delete("/admin/phone-numbers/:id", authenticateToken, requireAdmin, adminController.deletePhoneNumber);
 router.post("/admin/phone-numbers/:id/default", authenticateToken, requireAdmin, adminController.setDefaultPhoneNumber);
 
 // Top-level aliases for phone numbers
 router.get("/phone-numbers", authenticateToken, adminController.listPhoneNumbers);
-router.post("/phone-numbers", authenticateToken, adminController.registerPhoneNumber);
+router.post("/phone-numbers", authenticateToken, requireAdmin, adminController.registerPhoneNumber);
 router.delete("/phone-numbers/:id", authenticateToken, requireAdmin, adminController.deletePhoneNumber);
 router.post("/phone-numbers/:id/default", authenticateToken, requireAdmin, adminController.setDefaultPhoneNumber);
 
@@ -277,12 +277,12 @@ router.post("/broadcast/test-send", authenticateToken, broadcastController.sendT
 router.post("/broadcast/stream-token", authenticateToken, broadcastController.getStreamToken);
 
 // =========================================================================
-// 5. SETTINGS & CONNECTION (Protected)
+// 5. SETTINGS & CONNECTION (Protected & Admin Only for mutations)
 // =========================================================================
 router.get("/settings", authenticateToken, settingsController.getSettings);
-router.post("/settings", authenticateToken, settingsController.updateSettings);
+router.post("/settings", authenticateToken, requireAdmin, settingsController.updateSettings);
 router.post("/settings/test-connection", authenticateToken, settingsController.handleTestConnection);
-router.get("/settings/verify-meta", optionalAuth, settingsController.handleTestConnection);
+router.get("/settings/verify-meta", authenticateToken, settingsController.handleTestConnection);
 router.post("/settings/verify-meta", authenticateToken, settingsController.handleTestConnection);
 
 // System Time & Timezone (Deployments + Local)

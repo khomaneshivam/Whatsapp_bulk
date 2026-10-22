@@ -15,7 +15,7 @@ async function getCampaignReports(req, res) {
     const conditions = [];
 
     if (req.user?.role !== "ADMIN") {
-      conditions.push("(c.user_id = ? OR c.user_id IS NULL OR c.user_id = 'admin_root')");
+      conditions.push("c.user_id = ?");
       params.push(req.user.id);
     } else if (userId && String(userId).trim() && String(userId).trim() !== "ALL") {
       conditions.push("c.user_id = ?");
@@ -114,7 +114,7 @@ async function exportCampaignReport(req, res) {
       if (!campaign) {
         return res.status(404).json({ success: false, message: "Campaign not found." });
       }
-      if (req.user?.role !== "ADMIN" && campaign.user_id && campaign.user_id !== req.user?.id && campaign.user_id !== "admin_root") {
+      if (req.user?.role !== "ADMIN" && campaign.user_id !== req.user?.id) {
         return res.status(403).json({ success: false, message: "Forbidden: You do not have access to this campaign." });
       }
       conditions.push("r.campaign_id = ?");
@@ -122,7 +122,7 @@ async function exportCampaignReport(req, res) {
     }
 
     if (req.user?.role !== "ADMIN") {
-      conditions.push("(c.user_id = ? OR c.user_id IS NULL OR c.user_id = 'admin_root')");
+      conditions.push("c.user_id = ?");
       params.push(req.user.id);
     } else if (userId && String(userId).trim() && String(userId).trim() !== "ALL") {
       conditions.push("c.user_id = ?");
@@ -204,7 +204,7 @@ async function getAutomationReports(req, res) {
     const params = [];
 
     if (req.user?.role !== "ADMIN") {
-      conditions.push("(user_id = ? OR user_id IS NULL OR user_id = 'admin_root')");
+      conditions.push("user_id = ?");
       params.push(req.user.id);
     } else if (userId && String(userId).trim() && String(userId).trim() !== "ALL") {
       conditions.push("user_id = ?");
@@ -265,7 +265,7 @@ async function getOverviewAnalytics(req, res) {
     let userParams = [];
 
     if (req.user?.role !== "ADMIN") {
-      userClause = "WHERE (user_id = ? OR user_id IS NULL OR user_id = 'admin_root')";
+      userClause = "WHERE user_id = ?";
       userParams = [req.user.id];
     } else if (targetUserId && String(targetUserId).trim() && String(targetUserId).trim() !== "ALL") {
       userClause = "WHERE user_id = ?";
@@ -305,7 +305,7 @@ async function getOverviewAnalytics(req, res) {
 
     // Join params for recipients
     const joinClause = (req.user?.role !== "ADMIN")
-      ? "WHERE (c.user_id = ? OR c.user_id IS NULL OR c.user_id = 'admin_root')"
+      ? "WHERE c.user_id = ?"
       : (targetUserId && String(targetUserId).trim() && String(targetUserId).trim() !== "ALL")
         ? "WHERE c.user_id = ?"
         : "";
@@ -331,7 +331,7 @@ async function getOverviewAnalytics(req, res) {
 
     // Customer direct reply counts (connected to campaigns)
     const replyClause = (req.user?.role !== "ADMIN")
-      ? "WHERE (cr.user_id = ? OR cr.user_id IS NULL OR cr.user_id = 'admin_root')"
+      ? "WHERE cr.user_id = ?"
       : (targetUserId && String(targetUserId).trim() && String(targetUserId).trim() !== "ALL")
         ? "WHERE cr.user_id = ?"
         : "";

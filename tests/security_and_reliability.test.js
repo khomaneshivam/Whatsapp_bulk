@@ -196,6 +196,46 @@ describe("Security, Multi-Tenant Isolation & WhatsApp Broadcast Reliability Test
       const unauthStream = await fetch(`${baseUrl}/api/broadcast/stream?campaignId=test`);
       assert.strictEqual(unauthStream.status, 401);
     });
+
+    test("User registering with email containing 'admin' is assigned role 'USER' (Prevents privilege escalation)", async () => {
+      const email = `attacker_admin_${Date.now()}@test.com`;
+      const regRes = await fetch(`${baseUrl}/api/auth/register`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "Attacker User",
+          email,
+          phone: "919999888877",
+          password: "SecurePassword123!"
+        })
+      });
+      assert.strictEqual(regRes.status, 201);
+      const regData = await regRes.json();
+      assert.strictEqual(regData.success, true);
+      assert.strictEqual(regData.user.role, "USER");
+      testUserIds.push(regData.user.id);
+    });
+
+    test("Non-admin user cannot register WABA phone numbers (403 Forbidden)", async () => {
+      const res = await fetch(`${baseUrl}/api/admin/phone-numbers`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${userAToken}`
+        },
+        body: JSON.stringify({
+          displayName: "Hacked Phone",
+          phoneNumber: "+919876500000",
+          phoneNumberId: "123456789"
+        })
+      });
+      assert.strictEqual(res.status, 403);
+    });
+
+    test("GET /api/settings/verify-meta rejects unauthenticated requests with 401", async () => {
+      const res = await fetch(`${baseUrl}/api/settings/verify-meta`);
+      assert.strictEqual(res.status, 401);
+    });
   });
 
   // =========================================================================
