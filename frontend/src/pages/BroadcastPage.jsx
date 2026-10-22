@@ -684,9 +684,28 @@ export default function BroadcastPage() {
     }
   }
 
-  function connectSSEStream(campaignId) {
+  async function connectSSEStream(campaignId) {
     try {
-      const eventSource = new EventSource(`/api/broadcast/stream?campaignId=${campaignId}&token=${token}`);
+      let streamToken = token;
+      try {
+        const tokenRes = await fetch('/api/broadcast/stream-token', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          }
+        });
+        if (tokenRes.ok) {
+          const tokenData = await tokenRes.json();
+          if (tokenData?.streamToken) {
+            streamToken = tokenData.streamToken;
+          }
+        }
+      } catch (err) {
+        console.warn('Could not fetch dedicated stream token, using fallback', err);
+      }
+
+      const eventSource = new EventSource(`/api/broadcast/stream?campaignId=${campaignId}&streamToken=${encodeURIComponent(streamToken)}`);
       
       eventSource.onmessage = (event) => {
         try {

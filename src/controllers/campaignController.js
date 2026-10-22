@@ -2,21 +2,64 @@ const { db } = require("../config/database");
 const { generateCampaignReportExcel } = require("../services/excelService");
 
 /**
- * List all campaigns with status and summary metrics
+ * Helper to check campaign ownership
+ */
+function checkCampaignAccess(campaign, user) {
+  if (!campaign) {
+    return { allowed: false, status: 404, message: "Campaign not found." };
+  }
+  if (!user) {
+    return { allowed: false, status: 401, message: "Authentication required." };
+  }
+  if (user.role === "ADMIN") {
+    return { allowed: true };
+  }
+  if (campaign.user_id && campaign.user_id !== user.id) {
+    return { allowed: false, status: 403, message: "Forbidden: You do not have access to this campaign." };
+  }
+  return { allowed: true };
+}
+
+/**
+ * List all campaigns scoped by authenticated account
  */
 async function listCampaigns(req, res) {
   try {
-    const campaigns = db.prepare(`
+    const user = req.user;
+    if (!user) {
+      return res.status(401).json({ success: false, message: "Authentication required." });
+    }
+
+    let sql = `
       SELECT 
         c.*,
         (SELECT COUNT(*) FROM campaign_recipients WHERE campaign_id = c.id AND (status = 'DELIVERED' OR status = 'READ')) as current_delivered,
         (SELECT COUNT(*) FROM campaign_recipients WHERE campaign_id = c.id AND status = 'READ') as current_read,
         (SELECT COUNT(*) FROM campaign_recipients WHERE campaign_id = c.id AND status = 'SENT') as current_sent,
         (SELECT COUNT(*) FROM campaign_recipients WHERE campaign_id = c.id AND status = 'FAILED') as current_failed,
-        (SELECT COUNT(*) FROM campaign_recipients WHERE campaign_id = c.id AND status = 'PENDING') as current_pending
+        (SELECT COUNT(*) FROM campaign_recipients WHERE campaign_id = c.id AND status = 'PENDING') as current_pending,
+        (SELECT COUNT(*) FROM campaign_recipients WHERE campaign_id = c.id AND status = 'UNKNOWN') as current_unknown
       FROM campaigns c
-      ORDER BY c.created_at DESC
-    `).all();
+    `;
+
+    const params = [];
+
+    // Regular users are strictly restricted to their own campaigns
+    if (user.role !== "ADMIN") {
+      sql += " WHERE c.user_id = ?";
+      params.push(user.id);
+    } else {
+      // Admins can optionally filter by a specific target userId if provided
+      const targetUserId = req.query?.userId;
+      if (targetUserId && String(targetUserId).trim()) {
+        sql += " WHERE c.user_id = ?";
+        params.push(String(targetUserId).trim());
+      }
+    }
+
+    sql += " ORDER BY c.created_at DESC";
+
+    const campaigns = db.prepare(sql).all(...params);
 
     return res.status(200).json({
       success: true,
@@ -29,16 +72,17 @@ async function listCampaigns(req, res) {
 }
 
 /**
- * Get detailed campaign info and list of recipients with optional pagination and search
+ * Get detailed campaign info and list of recipients (verifying ownership)
  */
 async function getCampaignDetails(req, res) {
   try {
     const { campaignId } = req.params;
     const { page, limit, status, search } = req.query;
-    const campaign = db.prepare("SELECT * FROM campaigns WHERE id = ?").get(campaignId);
 
-    if (!campaign) {
-      return res.status(404).json({ success: false, message: "Campaign not found." });
+    const campaign = db.prepare("SELECT * FROM campaigns WHERE id = ?").get(campaignId);
+    const access = checkCampaignAccess(campaign, req.user);
+    if (!access.allowed) {
+      return res.status(access.status).json({ success: false, message: access.message });
     }
 
     // High performance indexed status breakdown
@@ -49,7 +93,8 @@ async function getCampaignDetails(req, res) {
         SUM(CASE WHEN status IN ('DELIVERED', 'READ') THEN 1 ELSE 0 END) as delivered,
         SUM(CASE WHEN status = 'READ' THEN 1 ELSE 0 END) as read,
         SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END) as failed,
-        SUM(CASE WHEN status = 'PENDING' THEN 1 ELSE 0 END) as pending
+        SUM(CASE WHEN status = 'PENDING' THEN 1 ELSE 0 END) as pending,
+        SUM(CASE WHEN status = 'UNKNOWN' THEN 1 ELSE 0 END) as unknown
       FROM campaign_recipients 
       WHERE campaign_id = ?
     `).get(campaignId);
@@ -106,12 +151,13 @@ async function getCampaignDetails(req, res) {
       data: {
         campaign,
         metrics: {
-          total: statusCounts.total || campaign.total_contacts || 0,
-          sent: statusCounts.sent || campaign.sent_count || 0,
-          delivered: statusCounts.delivered || 0,
-          read: statusCounts.read || 0,
-          failed: statusCounts.failed || campaign.failed_count || 0,
-          pending: statusCounts.pending || 0
+          total: statusCounts?.total || campaign.total_contacts || 0,
+          sent: statusCounts?.sent || campaign.sent_count || 0,
+          delivered: statusCounts?.delivered || 0,
+          read: statusCounts?.read || 0,
+          failed: statusCounts?.failed || campaign.failed_count || 0,
+          pending: statusCounts?.pending || 0,
+          unknown: statusCounts?.unknown || 0
         },
         recipients,
         pagination
@@ -124,11 +170,17 @@ async function getCampaignDetails(req, res) {
 }
 
 /**
- * Deletes a campaign and cascades recipients
+ * Deletes a campaign and cascades recipients (verifying ownership)
  */
 async function deleteCampaign(req, res) {
   try {
     const { campaignId } = req.params;
+
+    const campaign = db.prepare("SELECT * FROM campaigns WHERE id = ?").get(campaignId);
+    const access = checkCampaignAccess(campaign, req.user);
+    if (!access.allowed) {
+      return res.status(access.status).json({ success: false, message: access.message });
+    }
 
     if (campaignId === "campaign_booking_lifecycle") {
       db.prepare("DELETE FROM campaign_recipients WHERE campaign_id = ?").run(campaignId);
@@ -153,19 +205,19 @@ async function deleteCampaign(req, res) {
 }
 
 /**
- * Exports campaign delivery results as an Excel workbook
+ * Exports campaign delivery results as an Excel workbook (verifying ownership)
  */
 async function exportCampaignReport(req, res) {
   try {
     const { campaignId } = req.params;
     const campaign = db.prepare("SELECT * FROM campaigns WHERE id = ?").get(campaignId);
-
-    if (!campaign) {
-      return res.status(404).json({ success: false, message: "Campaign not found." });
+    const access = checkCampaignAccess(campaign, req.user);
+    if (!access.allowed) {
+      return res.status(access.status).json({ success: false, message: access.message });
     }
 
     const recipients = db.prepare(`
-      SELECT phone_number, clean_phone, contact_name, status, meta_message_id, error_message, sent_at
+      SELECT phone_number, clean_phone, contact_name, status, meta_message_id, error_code, error_message, sent_at
       FROM campaign_recipients
       WHERE campaign_id = ?
       ORDER BY id ASC

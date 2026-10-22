@@ -2,7 +2,7 @@ const EventEmitter = require("events");
 const fs = require("fs");
 const path = require("path");
 const { db } = require("../config/database");
-const { sendTemplateMessage, sendTextMessage, uploadMedia } = require("./metaWhatsAppService");
+const metaWhatsAppService = require("./metaWhatsAppService");
 
 class BroadcastEngine extends EventEmitter {
   constructor() {
@@ -251,25 +251,28 @@ class BroadcastEngine extends EventEmitter {
       throw new Error(`Campaign '${campaign.name}' is already currently running.`);
     }
 
+    // Database-backed atomic claim to prevent double-launch races
+    const claim = db.prepare(`
+      UPDATE campaigns 
+      SET status = 'RUNNING', started_at = COALESCE(started_at, CURRENT_TIMESTAMP) 
+      WHERE id = ? AND status IN ('DRAFT', 'SCHEDULED', 'PAUSED')
+    `).run(campaignId);
+
+    if (claim.changes === 0) {
+      throw new Error(`Campaign '${campaign.name}' cannot be launched; current status is '${campaign.status}'.`);
+    }
+
     if (overrideDelayMs !== null && overrideDelayMs !== undefined) {
       const parsedDelay = parseInt(overrideDelayMs, 10);
-      if (!isNaN(parsedDelay) && parsedDelay >= 0) {
-        db.prepare("UPDATE campaigns SET delay_ms = ? WHERE id = ?").run(parsedDelay, campaignId);
-        campaign.delay_ms = parsedDelay;
+      if (!isNaN(parsedDelay)) {
+        const safeDelay = Math.min(Math.max(parsedDelay, 50), 10000);
+        db.prepare("UPDATE campaigns SET delay_ms = ? WHERE id = ?").run(safeDelay, campaignId);
+        campaign.delay_ms = safeDelay;
       }
     }
 
-    const resolvedDelay = (campaign.delay_ms !== undefined && campaign.delay_ms !== null) ? campaign.delay_ms : 250;
-
-    // Check pending vs failed recipients for retry support
-    const pendingCount = db.prepare("SELECT COUNT(*) as c FROM campaign_recipients WHERE campaign_id = ? AND status = 'PENDING'").get(campaignId).c;
-    if (pendingCount === 0) {
-      const failedCount = db.prepare("SELECT COUNT(*) as c FROM campaign_recipients WHERE campaign_id = ? AND status = 'FAILED'").get(campaignId).c;
-      if (failedCount > 0) {
-        db.prepare("UPDATE campaign_recipients SET status = 'PENDING', error_message = NULL WHERE campaign_id = ? AND status = 'FAILED'").run(campaignId);
-        db.prepare("UPDATE campaigns SET failed_count = 0 WHERE id = ?").run(campaignId);
-      }
-    }
+    const rawDelay = (campaign.delay_ms !== undefined && campaign.delay_ms !== null) ? campaign.delay_ms : 250;
+    const resolvedDelay = Math.min(Math.max(rawDelay, 50), 10000);
 
     const jobState = {
       paused: false,
@@ -278,13 +281,6 @@ class BroadcastEngine extends EventEmitter {
       delayMs: resolvedDelay
     };
     this.activeJobs.set(campaignId, jobState);
-
-    // Update campaign status to RUNNING in database
-    db.prepare(`
-      UPDATE campaigns 
-      SET status = 'RUNNING', started_at = COALESCE(started_at, CURRENT_TIMESTAMP) 
-      WHERE id = ?
-    `).run(campaignId);
 
     this.emit("campaign:status", {
       campaignId,
@@ -362,7 +358,7 @@ class BroadcastEngine extends EventEmitter {
             }
 
             if (fileBuffer) {
-              const uploadRes = await uploadMedia({ fileBuffer, fileName, mimeType });
+              const uploadRes = await metaWhatsAppService.uploadMedia({ fileBuffer, fileName, mimeType });
               if (uploadRes && uploadRes.mediaId) {
                 mappingConfig.headerMediaId = uploadRes.mediaId;
                 db.prepare("UPDATE campaigns SET mapping_config = ? WHERE id = ?").run(
@@ -394,12 +390,26 @@ class BroadcastEngine extends EventEmitter {
       WHERE id = ?
     `);
 
+    const updateRecipientUnknown = db.prepare(`
+      UPDATE campaign_recipients 
+      SET status = 'UNKNOWN', error_message = ?, error_code = ?, rendered_message = ?, sent_at = CURRENT_TIMESTAMP 
+      WHERE id = ?
+    `);
+
     const incrementSent = db.prepare(`
       UPDATE campaigns SET sent_count = sent_count + 1 WHERE id = ?
     `);
 
     const incrementFailed = db.prepare(`
       UPDATE campaigns SET failed_count = failed_count + 1 WHERE id = ?
+    `);
+
+    const incrementUnknown = db.prepare(`
+      UPDATE campaigns SET unknown_count = COALESCE(unknown_count, 0) + 1 WHERE id = ?
+    `);
+
+    const checkSuppressed = db.prepare(`
+      SELECT id FROM contact_suppressions WHERE clean_phone = ? LIMIT 1
     `);
 
     const fetchPendingBatch = db.prepare(`
@@ -428,12 +438,13 @@ class BroadcastEngine extends EventEmitter {
         if (!batch || batch.length === 0) {
           // All recipients processed!
           db.prepare("UPDATE campaigns SET status = 'COMPLETED', completed_at = CURRENT_TIMESTAMP WHERE id = ?").run(campaignId);
-          const finalCamp = db.prepare("SELECT sent_count, failed_count, valid_contacts FROM campaigns WHERE id = ?").get(campaignId);
+          const finalCamp = db.prepare("SELECT sent_count, failed_count, valid_contacts, unknown_count FROM campaigns WHERE id = ?").get(campaignId);
           this.emit("campaign:status", {
             campaignId,
             status: "COMPLETED",
             sent: finalCamp?.sent_count || 0,
             failed: finalCamp?.failed_count || 0,
+            unknown: finalCamp?.unknown_count || 0,
             total: finalCamp?.valid_contacts || campaign.valid_contacts,
             message: `Campaign '${campaign.name}' finished broadcasting.`
           });
@@ -447,6 +458,13 @@ class BroadcastEngine extends EventEmitter {
           }
           if (jobState.cancelled || !jobState.running) break;
 
+          // Suppression check (opted-out numbers are skipped)
+          if (checkSuppressed.get(recipient.clean_phone)) {
+            updateRecipientFail.run("Skipped: recipient opted out of broadcast messaging", "SUPPRESSED_OPT_OUT", "", recipient.id);
+            incrementFailed.run(campaignId);
+            continue;
+          }
+
           let rowData = {};
           try {
             rowData = recipient.raw_data ? JSON.parse(recipient.raw_data) : {};
@@ -454,44 +472,65 @@ class BroadcastEngine extends EventEmitter {
             rowData = {};
           }
 
-          // Dispatch via Meta Cloud API
-          try {
-            let sendResult;
-            let renderedContent = "";
+          // Dispatch via Meta Cloud API with transient retry & ambiguous outcome guard
+          let sendResult = null;
+          let renderedContent = "";
+          let lastErr = null;
+          let isSuccess = false;
 
-            if (campaign.message_type === "TEMPLATE") {
-              let tplName = (campaign.template_name || "kt_restaurant_invitation").trim();
-              let tplLang = campaign.template_language;
+          for (let attempt = 0; attempt < 2; attempt++) {
+            try {
+              if (campaign.message_type === "TEMPLATE") {
+                let tplName = (campaign.template_name || "kt_restaurant_invitation").trim();
+                let tplLang = campaign.template_language;
 
-              if (tplName === "1757343188867100" || tplName.toLowerCase().includes("restaurant")) {
-                tplName = "kt_restaurant_invitation";
-                tplLang = "en";
+                if (tplName === "1757343188867100" || tplName.toLowerCase().includes("restaurant")) {
+                  tplName = "kt_restaurant_invitation";
+                  tplLang = "en";
+                }
+
+                const components = this.buildTemplateComponents(mappingConfig, rowData, tplName);
+                renderedContent = JSON.stringify(components);
+
+                sendResult = await metaWhatsAppService.sendTemplateMessage({
+                  to: recipient.clean_phone,
+                  templateName: tplName,
+                  languageCode: tplLang || "en",
+                  components: components
+                });
+              } else {
+                // Direct Text Message
+                renderedContent = this.interpolateText(campaign.message_body, rowData);
+
+                sendResult = await metaWhatsAppService.sendTextMessage({
+                  to: recipient.clean_phone,
+                  body: renderedContent
+                });
               }
-
-              const components = this.buildTemplateComponents(mappingConfig, rowData, tplName);
-              renderedContent = JSON.stringify(components);
-
-              sendResult = await sendTemplateMessage({
-                to: recipient.clean_phone,
-                templateName: tplName,
-                languageCode: tplLang || "en",
-                components: components
-              });
-            } else {
-              // Direct Text Message
-              renderedContent = this.interpolateText(campaign.message_body, rowData);
-
-              sendResult = await sendTextMessage({
-                to: recipient.clean_phone,
-                body: renderedContent
-              });
+              isSuccess = true;
+              break;
+            } catch (err) {
+              lastErr = err;
+              if (err.isAmbiguous) {
+                // Never blindly retry when outcome is ambiguous (socket closed after send)
+                break;
+              }
+              if (err.isTransient && attempt === 0) {
+                // Bounded exponential backoff + jitter for transient errors (429/503)
+                const jitter = Math.floor(Math.random() * 200);
+                await this.sleep(1000 + jitter);
+                continue;
+              }
+              break;
             }
+          }
 
+          if (isSuccess && sendResult) {
             // Mark recipient as SENT
             updateRecipientSuccess.run(sendResult.messageId || null, renderedContent, recipient.id);
             incrementSent.run(campaignId);
 
-            const curStats = db.prepare("SELECT sent_count, failed_count, valid_contacts FROM campaigns WHERE id = ?").get(campaignId);
+            const curStats = db.prepare("SELECT sent_count, failed_count, valid_contacts, unknown_count FROM campaigns WHERE id = ?").get(campaignId);
             this.emit("broadcast:progress", {
               campaignId,
               recipientId: recipient.id,
@@ -501,27 +540,50 @@ class BroadcastEngine extends EventEmitter {
               messageId: sendResult.messageId,
               sent: curStats?.sent_count || 1,
               failed: curStats?.failed_count || 0,
+              unknown: curStats?.unknown_count || 0,
               total: curStats?.valid_contacts || campaign.valid_contacts,
               lastRecipient: recipient.contact_name || recipient.clean_phone,
               metaMessageId: sendResult.messageId
             });
-          } catch (err) {
-            const errCode = String(err.code || err.subcode || err.status || "");
-            console.warn(`[Broadcast] Message failed to ${recipient.clean_phone} (${errCode}):`, err.message);
-            updateRecipientFail.run(err.message || "Failed to send", errCode || null, "", recipient.id);
+          } else if (lastErr?.isAmbiguous) {
+            // Mark recipient as UNKNOWN without incrementing failed count blindly
+            console.warn(`[Broadcast] Ambiguous outcome for ${recipient.clean_phone}:`, lastErr.message);
+            updateRecipientUnknown.run(lastErr.message || "Meta response dropped; outcome ambiguous", "AMBIGUOUS_TIMEOUT", renderedContent, recipient.id);
+            incrementUnknown.run(campaignId);
+
+            const curStats = db.prepare("SELECT sent_count, failed_count, valid_contacts, unknown_count FROM campaigns WHERE id = ?").get(campaignId);
+            this.emit("broadcast:progress", {
+              campaignId,
+              recipientId: recipient.id,
+              phone: recipient.clean_phone,
+              name: recipient.contact_name,
+              status: "UNKNOWN",
+              error: lastErr.message,
+              errorCode: "AMBIGUOUS_TIMEOUT",
+              sent: curStats?.sent_count || 0,
+              failed: curStats?.failed_count || 0,
+              unknown: curStats?.unknown_count || 1,
+              total: curStats?.valid_contacts || campaign.valid_contacts,
+              lastRecipient: recipient.contact_name || recipient.clean_phone
+            });
+          } else {
+            const errCode = String(lastErr?.metaCode || lastErr?.code || lastErr?.statusCode || "");
+            console.warn(`[Broadcast] Message failed to ${recipient.clean_phone} (${errCode}):`, lastErr?.message);
+            updateRecipientFail.run(lastErr?.message || "Failed to send", errCode || null, renderedContent, recipient.id);
             incrementFailed.run(campaignId);
 
-            const curStats = db.prepare("SELECT sent_count, failed_count, valid_contacts FROM campaigns WHERE id = ?").get(campaignId);
+            const curStats = db.prepare("SELECT sent_count, failed_count, valid_contacts, unknown_count FROM campaigns WHERE id = ?").get(campaignId);
             this.emit("broadcast:progress", {
               campaignId,
               recipientId: recipient.id,
               phone: recipient.clean_phone,
               name: recipient.contact_name,
               status: "FAILED",
-              error: err.message,
+              error: lastErr?.message || "Send failed",
               errorCode: errCode,
               sent: curStats?.sent_count || 0,
               failed: curStats?.failed_count || 1,
+              unknown: curStats?.unknown_count || 0,
               total: curStats?.valid_contacts || campaign.valid_contacts,
               lastRecipient: recipient.contact_name || recipient.clean_phone
             });
@@ -545,27 +607,29 @@ class BroadcastEngine extends EventEmitter {
   }
 
   /**
-   * Updates dispatch throttle delay dynamically for a campaign
+   * Updates dispatch throttle delay dynamically for a campaign with safety bounds
    */
   setCampaignDelay(campaignId, delayMs) {
     const parsed = parseInt(delayMs, 10);
     if (isNaN(parsed) || parsed < 0) {
-      throw new Error("Invalid throttle delay in milliseconds. Must be a non-negative integer.");
+      throw new Error("Invalid throttle delay in milliseconds. Must be a positive integer.");
     }
 
-    db.prepare("UPDATE campaigns SET delay_ms = ? WHERE id = ?").run(parsed, campaignId);
+    const safeDelay = Math.min(Math.max(parsed, 50), 10000);
+
+    db.prepare("UPDATE campaigns SET delay_ms = ? WHERE id = ?").run(safeDelay, campaignId);
     const job = this.activeJobs.get(campaignId);
     if (job) {
-      job.delayMs = parsed;
+      job.delayMs = safeDelay;
     }
 
     this.emit("campaign:throttle", {
       campaignId,
-      delayMs: parsed,
-      message: `Dispatch throttle delay updated to ${parsed}ms.`
+      delayMs: safeDelay,
+      message: `Dispatch throttle delay updated to ${safeDelay}ms.`
     });
 
-    return { success: true, delayMs: parsed };
+    return { success: true, delayMs: safeDelay };
   }
 
   /**

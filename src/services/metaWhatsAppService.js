@@ -70,6 +70,7 @@ function parseMetaError(errorData, fallbackStatus = 500) {
   err.metaCode = code;
   err.metaSubcode = subcode;
   err.hint = hint;
+  err.isTransient = fallbackStatus === 429 || fallbackStatus === 503 || code === 80007 || code === 1 || code === 2;
   return err;
 }
 
@@ -511,16 +512,28 @@ async function sendTemplateMessage({ to, templateName, languageCode, components 
     template: templatePayload
   };
 
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${creds.token}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify(payload)
-  });
+  let res, data;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${creds.token}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(15000)
+    });
+    data = await res.json();
+  } catch (netErr) {
+    if (netErr.name === "TimeoutError" || netErr.name === "AbortError" || netErr.code === "ECONNRESET" || netErr.code === "ETIMEDOUT" || netErr.message?.includes("fetch failed")) {
+      const ambErr = new Error(`Ambiguous outcome: Meta request timed out or network dropped (${netErr.message})`);
+      ambErr.isAmbiguous = true;
+      ambErr.code = "NETWORK_AMBIGUOUS";
+      throw ambErr;
+    }
+    throw netErr;
+  }
 
-  const data = await res.json();
   if (!res.ok) {
     throw parseMetaError(data, res.status);
   }
@@ -558,16 +571,28 @@ async function sendTextMessage({ to, body, previewUrl = false, customCredentials
     }
   };
 
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${creds.token}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify(payload)
-  });
+  let res, data;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${creds.token}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(15000)
+    });
+    data = await res.json();
+  } catch (netErr) {
+    if (netErr.name === "TimeoutError" || netErr.name === "AbortError" || netErr.code === "ECONNRESET" || netErr.code === "ETIMEDOUT" || netErr.message?.includes("fetch failed")) {
+      const ambErr = new Error(`Ambiguous outcome: Meta request timed out or network dropped (${netErr.message})`);
+      ambErr.isAmbiguous = true;
+      ambErr.code = "NETWORK_AMBIGUOUS";
+      throw ambErr;
+    }
+    throw netErr;
+  }
 
-  const data = await res.json();
   if (!res.ok) {
     throw parseMetaError(data, res.status);
   }

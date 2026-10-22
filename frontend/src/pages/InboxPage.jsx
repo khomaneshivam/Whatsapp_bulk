@@ -284,6 +284,12 @@ export default function InboxPage() {
   const [lightboxZoomed, setLightboxZoomed] = useState(false);
   const [downloadingMedia, setDownloadingMedia] = useState(false);
 
+  // DOM element and workflow references
+  const messagesEndRef = useRef(null);
+  const textareaRef = useRef(null);
+  const fileInputRef = useRef(null);
+  const initialSelectionDone = useRef(false);
+
   // Close lightbox on Escape key
   useEffect(() => {
     function handleKeyDown(e) {
@@ -401,7 +407,7 @@ export default function InboxPage() {
   async function loadInbox(silent = false) {
     if (!silent) setLoading(true);
     try {
-      const res = await fetch('/api/inbox/replies', {
+      const res = await fetch('/api/inbox/replies?limit=1000', {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       const data = await res.json();
@@ -534,20 +540,32 @@ export default function InboxPage() {
 
         setConversations(sortedConvos);
 
-        // Keep current selection updated with new messages, or only auto-select on initial load on desktop
+        // Keep current selection updated with new messages, or restore from sessionStorage, or auto-select on desktop
         setSelectedConvo(prev => {
-          if (prev) {
-            const updated = sortedConvos.find(c => c.phone === prev.phone);
-            return updated || prev;
+          let targetPhone = prev?.phone;
+          if (!targetPhone && typeof window !== 'undefined') {
+            try {
+              targetPhone = sessionStorage.getItem('inbox_selected_phone');
+            } catch (e) {}
+          }
+
+          if (targetPhone) {
+            const updated = sortedConvos.find(c => c.phone === targetPhone);
+            if (updated) {
+              return updated;
+            }
           }
 
           // Initial load auto-select ONLY on desktop (window width >= 900px)
           if (!initialSelectionDone.current && typeof window !== 'undefined' && window.innerWidth >= 900 && sortedConvos.length > 0) {
             initialSelectionDone.current = true;
+            try {
+              sessionStorage.setItem('inbox_selected_phone', sortedConvos[0].phone);
+            } catch (e) {}
             return sortedConvos[0];
           }
 
-          return null;
+          return prev || null;
         });
       }
     } catch (err) {
@@ -560,6 +578,9 @@ export default function InboxPage() {
   function handleSelectConversation(convo) {
     setSelectedConvo(convo);
     initialSelectionDone.current = true;
+    try {
+      sessionStorage.setItem('inbox_selected_phone', convo.phone);
+    } catch (e) {}
 
     // Clear unread badge locally
     if (convo.unreadCount > 0) {
@@ -583,6 +604,9 @@ export default function InboxPage() {
   function handleBackToList() {
     setSelectedConvo(null);
     initialSelectionDone.current = true; // prevents background polling from forcing chat re-open
+    try {
+      sessionStorage.removeItem('inbox_selected_phone');
+    } catch (e) {}
   }
 
   async function handleDeleteConversation(convo) {
@@ -603,6 +627,11 @@ export default function InboxPage() {
       if (data.success) {
         setConversations(prev => prev.filter(c => c.phone !== convo.phone));
         setSelectedConvo(prev => (prev?.phone === convo.phone ? null : prev));
+        try {
+          if (sessionStorage.getItem('inbox_selected_phone') === convo.phone) {
+            sessionStorage.removeItem('inbox_selected_phone');
+          }
+        } catch (e) {}
       } else {
         alert(data.message || 'Failed to delete chat.');
       }

@@ -788,8 +788,19 @@ class BookingAutomationService {
   /**
    * Retrieves historical log of automated dispatches
    */
-  getDispatchHistory(limit = 100) {
-    const rows = db.prepare(`
+  getDispatchHistory(limit = 100, userId = null) {
+    if (userId) {
+      return db.prepare(`
+        SELECT id, booking_id, guest_name, phone_number, clean_phone, property_name,
+               checkin_date, checkout_date, trigger_type, template_name, meta_message_id,
+               status, error_message, dispatched_at
+        FROM automated_booking_dispatches
+        WHERE user_id = ?
+        ORDER BY dispatched_at DESC
+        LIMIT ?
+      `).all(userId, limit);
+    }
+    return db.prepare(`
       SELECT id, booking_id, guest_name, phone_number, clean_phone, property_name,
              checkin_date, checkout_date, trigger_type, template_name, meta_message_id,
              status, error_message, dispatched_at
@@ -797,8 +808,6 @@ class BookingAutomationService {
       ORDER BY dispatched_at DESC
       LIMIT ?
     `).all(limit);
-
-    return rows;
   }
 
   /**
@@ -1096,7 +1105,17 @@ class BookingAutomationService {
   /**
    * Retrieves all permanently saved uploaded contacts
    */
-  getUploadedContacts(limit = 100) {
+  getUploadedContacts(limit = 100, userId = null) {
+    if (userId) {
+      return db.prepare(`
+        SELECT id, booking_id, guest_name, phone_number, clean_phone, property_name,
+               checkin_date, checkout_date, raw_data, source, created_at
+        FROM automated_booking_contacts
+        WHERE user_id = ?
+        ORDER BY id DESC
+        LIMIT ?
+      `).all(userId, limit);
+    }
     return db.prepare(`
       SELECT id, booking_id, guest_name, phone_number, clean_phone, property_name,
              checkin_date, checkout_date, raw_data, source, created_at
@@ -1107,10 +1126,15 @@ class BookingAutomationService {
   }
 
   /**
-   * Clears all permanently saved uploaded contacts
+   * Clears permanently saved uploaded contacts (scoped by user if specified)
    */
-  clearUploadedContacts() {
-    const res = db.prepare("DELETE FROM automated_booking_contacts").run();
+  clearUploadedContacts(userId = null) {
+    let res;
+    if (userId) {
+      res = db.prepare("DELETE FROM automated_booking_contacts WHERE user_id = ?").run(userId);
+    } else {
+      res = db.prepare("DELETE FROM automated_booking_contacts").run();
+    }
     this.syncEvergreenCampaign(0);
     return { success: true, count: res.changes || 0 };
   }

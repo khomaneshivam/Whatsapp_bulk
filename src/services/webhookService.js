@@ -315,13 +315,45 @@ class WebhookService {
       }
     }
 
+    // Resolve owning user_id for multi-tenant isolation
+    let replyUserId = null;
+    if (matchedCampaignId) {
+      const camp = db.prepare("SELECT user_id FROM campaigns WHERE id = ?").get(matchedCampaignId);
+      if (camp?.user_id) replyUserId = camp.user_id;
+    }
+    if (!replyUserId && cleanPhone) {
+      const pastCamp = db.prepare(`
+        SELECT c.user_id 
+        FROM campaign_recipients cr 
+        JOIN campaigns c ON cr.campaign_id = c.id 
+        WHERE cr.clean_phone = ? 
+        ORDER BY cr.id DESC LIMIT 1
+      `).get(cleanPhone);
+      if (pastCamp?.user_id) replyUserId = pastCamp.user_id;
+    }
+
+    // Auto-opt-out detection (Suppression handling)
+    const normalizedBody = String(messageBody || "").trim().toUpperCase();
+    if (["STOP", "UNSUBSCRIBE", "OPT OUT", "OPTOUT", "CANCEL"].includes(normalizedBody)) {
+      try {
+        db.prepare(`
+          INSERT OR REPLACE INTO contact_suppressions (clean_phone, reason, user_id, created_at)
+          VALUES (?, 'USER_OPT_OUT', ?, CURRENT_TIMESTAMP)
+        `).run(cleanPhone, replyUserId);
+        const maskedPhone = cleanPhone.length > 4 ? `***${cleanPhone.slice(-4)}` : "***";
+        console.log(`[Opt-Out] Contact ${maskedPhone} opted out via STOP keyword.`);
+      } catch (optErr) {
+        console.warn("[Opt-Out] Suppression insert notice:", optErr.message);
+      }
+    }
+
     const insertStmt = db.prepare(`
       INSERT INTO customer_replies (
         wa_message_id, from_phone, customer_name, message_type,
         message_body, raw_payload, context_message_id, campaign_id,
         media_url, media_type, media_caption,
-        is_read, received_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+        is_read, user_id, received_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
     `);
 
     const runResult = insertStmt.run(
@@ -336,10 +368,12 @@ class WebhookService {
       incomingMediaUrl,
       incomingMediaType,
       incomingMediaCaption,
+      replyUserId,
       receivedAt
     );
 
-    console.log(`[Webhook] Saved customer reply #${runResult.lastInsertRowid} from ${fromPhone} (${customerName || "Unknown"}): "${messageBody}"`);
+    const maskedSender = cleanPhone.length > 4 ? `***${cleanPhone.slice(-4)}` : "***";
+    console.log(`[Webhook] Saved customer reply #${runResult.lastInsertRowid} from ${maskedSender} (type: ${msgType})`);
 
     // If inbound media needs background downloading from Meta
     if (incomingMediaId && (!incomingMediaUrl || incomingMediaUrl.startsWith("/api/media/inbound/"))) {
@@ -495,12 +529,18 @@ class WebhookService {
   /**
    * Retrieves customer replies with filtering, searching, and pagination
    */
-  getReplies({ limit = 50, offset = 0, search = "", campaignId = "", unreadOnly = false }) {
-    const parsedLimit = Math.min(Math.max(parseInt(limit, 10) || 50, 1), 200);
+  getReplies({ limit = 50, offset = 0, search = "", campaignId = "", unreadOnly = false, userId = null }) {
+    const parsedLimit = Math.min(Math.max(parseInt(limit, 10) || 50, 1), 1000);
     const parsedOffset = Math.max(parseInt(offset, 10) || 0, 0);
 
     const conditions = [];
     const params = [];
+
+    // Tenant scoping
+    if (userId) {
+      conditions.push("(r.user_id = ? OR c.user_id = ?)");
+      params.push(userId, userId);
+    }
 
     if (search && String(search).trim()) {
       const q = `%${String(search).trim()}%`;
@@ -520,14 +560,29 @@ class WebhookService {
     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
 
     // Total count
-    const countSql = `SELECT COUNT(*) as total FROM customer_replies r ${whereClause}`;
+    const countSql = `SELECT COUNT(*) as total FROM customer_replies r LEFT JOIN campaigns c ON r.campaign_id = c.id ${whereClause}`;
     const totalCount = db.prepare(countSql).get(...params).total;
 
-    // Unread count (overall)
-    const unreadCount = db.prepare("SELECT COUNT(*) as unread FROM customer_replies WHERE is_read = 0").get().unread;
+    // Unread count
+    const unreadConditions = ["r.is_read = 0"];
+    const unreadParams = [];
+    if (userId) {
+      unreadConditions.push("(r.user_id = ? OR c.user_id = ?)");
+      unreadParams.push(userId, userId);
+    }
+    const unreadSql = `SELECT COUNT(*) as unread FROM customer_replies r LEFT JOIN campaigns c ON r.campaign_id = c.id WHERE ${unreadConditions.join(" AND ")}`;
+    const unreadCount = db.prepare(unreadSql).get(...unreadParams).unread;
 
     // Distinct customer contacts count
-    const distinctContacts = db.prepare("SELECT COUNT(DISTINCT from_phone) as count FROM customer_replies").get().count;
+    const distinctConditions = [];
+    const distinctParams = [];
+    if (userId) {
+      distinctConditions.push("(r.user_id = ? OR c.user_id = ?)");
+      distinctParams.push(userId, userId);
+    }
+    const distinctWhere = distinctConditions.length > 0 ? `WHERE ${distinctConditions.join(" AND ")}` : "";
+    const distinctSql = `SELECT COUNT(DISTINCT r.from_phone) as count FROM customer_replies r LEFT JOIN campaigns c ON r.campaign_id = c.id ${distinctWhere}`;
+    const distinctContacts = db.prepare(distinctSql).get(...distinctParams).count;
 
     // Query replies
     const dataSql = `

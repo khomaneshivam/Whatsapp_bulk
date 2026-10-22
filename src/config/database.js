@@ -166,6 +166,33 @@ function initializeDatabase() {
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
+    CREATE TABLE IF NOT EXISTS contact_suppressions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      clean_phone TEXT UNIQUE NOT NULL,
+      reason TEXT DEFAULT 'USER_OPT_OUT',
+      user_id TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS audit_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id TEXT,
+      action TEXT NOT NULL,
+      target_id TEXT,
+      details TEXT,
+      ip_address TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS incoming_webhook_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      event_id TEXT UNIQUE,
+      event_type TEXT,
+      status TEXT DEFAULT 'PROCESSED',
+      error_message TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
     CREATE INDEX IF NOT EXISTS idx_recipients_campaign ON campaign_recipients(campaign_id);
     CREATE INDEX IF NOT EXISTS idx_recipients_status ON campaign_recipients(campaign_id, status);
     CREATE INDEX IF NOT EXISTS idx_templates_name ON templates(name);
@@ -183,18 +210,26 @@ function initializeDatabase() {
     CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
     CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
     CREATE INDEX IF NOT EXISTS idx_waba_phone_id ON waba_phone_numbers(phone_number_id);
+    CREATE INDEX IF NOT EXISTS idx_suppressions_phone ON contact_suppressions(clean_phone);
+    CREATE INDEX IF NOT EXISTS idx_audit_user ON audit_logs(user_id);
   `);
 
-  // Migrate existing databases: add scheduled_at column if not present
+  // Migrate existing databases: add scheduled_at, unknown_count, estimated_cost to campaigns
   try {
     const tableInfo = db.prepare("PRAGMA table_info(campaigns)").all();
-    const hasScheduledAt = tableInfo.some(col => col.name === "scheduled_at");
-    if (!hasScheduledAt) {
+    const colNames = tableInfo.map(col => col.name);
+    if (!colNames.includes("scheduled_at")) {
       db.exec("ALTER TABLE campaigns ADD COLUMN scheduled_at DATETIME;");
+    }
+    if (!colNames.includes("unknown_count")) {
+      db.exec("ALTER TABLE campaigns ADD COLUMN unknown_count INTEGER DEFAULT 0;");
+    }
+    if (!colNames.includes("estimated_cost")) {
+      db.exec("ALTER TABLE campaigns ADD COLUMN estimated_cost REAL DEFAULT 0;");
     }
     db.exec("CREATE INDEX IF NOT EXISTS idx_campaigns_status_scheduled ON campaigns(status, scheduled_at);");
   } catch (migErr) {
-    console.warn("[DB Migration] scheduled_at check:", migErr.message);
+    console.warn("[DB Migration] campaigns columns check:", migErr.message);
   }
 
   // Migrate customer_replies: add reply tracking columns if not present
@@ -367,15 +402,20 @@ function initializeDatabase() {
     console.warn("[DB Seed] templates seed check:", tplSeedErr.message);
   }
 
-  // Seed default admin user if users table is empty
+  // Seed default admin user if users table is empty (Development only)
   try {
     const userCount = db.prepare("SELECT COUNT(*) as count FROM users").get()?.count || 0;
     if (userCount === 0) {
-      const defaultHash = bcrypt.hashSync("admin123", 10);
-      db.prepare(`
-        INSERT INTO users (id, name, email, phone, password_hash, role, status)
-        VALUES ('admin_root', 'Shivam Khomane', 'khomaneshivam@gmail.com', '9307382030', ?, 'ADMIN', 'ACTIVE')
-      `).run(defaultHash);
+      if (process.env.NODE_ENV === "production") {
+        console.log("[Security] Production startup: No users found. First registered user will be assigned Master Administrator role.");
+      } else {
+        const defaultHash = bcrypt.hashSync("admin123", 10);
+        db.prepare(`
+          INSERT INTO users (id, name, email, phone, password_hash, role, status)
+          VALUES ('admin_root', 'Shivam Khomane', 'khomaneshivam@gmail.com', '9307382030', ?, 'ADMIN', 'ACTIVE')
+        `).run(defaultHash);
+        console.log("[DB Seed] Development admin user seeded ('admin_root'). Change password immediately in production.");
+      }
     }
   } catch (userSeedErr) {
     console.warn("[DB Seed] user seed check:", userSeedErr.message);

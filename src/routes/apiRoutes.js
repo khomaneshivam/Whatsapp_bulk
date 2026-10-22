@@ -11,14 +11,16 @@ const settingsController = require("../controllers/settingsController");
 const authController = require("../controllers/authController");
 const adminController = require("../controllers/adminController");
 const reportsController = require("../controllers/reportsController");
-const { authenticateToken, requireAdmin, optionalAuth } = require("../middleware/authMiddleware");
+const { authenticateToken, requireAdmin, authenticateStreamToken } = require("../middleware/authMiddleware");
+const { authLimiter, broadcastLimiter, uploadLimiter } = require("../middleware/rateLimiter");
 const broadcastEngine = require("../services/broadcastEngine");
+const metaWhatsAppService = require("../services/metaWhatsAppService");
 
 // =========================================================================
 // 1. AUTHENTICATION & PROFILE
 // =========================================================================
-router.post("/auth/register", authController.register);
-router.post("/auth/login", authController.login);
+router.post("/auth/register", authLimiter, authController.register);
+router.post("/auth/login", authLimiter, authController.login);
 router.get("/auth/me", authenticateToken, authController.getMe);
 router.post("/auth/profile", authenticateToken, authController.updateProfile);
 
@@ -33,25 +35,25 @@ router.post("/admin/users/:userId/assign-phone", authenticateToken, requireAdmin
 router.post("/admin/impersonate/:userId", authenticateToken, requireAdmin, adminController.impersonateUser);
 router.get("/admin/overview", authenticateToken, requireAdmin, adminController.getSystemOverview);
 
-// WhatsApp Phone Number Registry
-router.get("/admin/phone-numbers", optionalAuth, adminController.listPhoneNumbers);
+// WhatsApp Phone Number Registry (Protected)
+router.get("/admin/phone-numbers", authenticateToken, adminController.listPhoneNumbers);
 router.post("/admin/phone-numbers", authenticateToken, adminController.registerPhoneNumber);
 router.delete("/admin/phone-numbers/:id", authenticateToken, requireAdmin, adminController.deletePhoneNumber);
 router.post("/admin/phone-numbers/:id/default", authenticateToken, requireAdmin, adminController.setDefaultPhoneNumber);
 
 // Top-level aliases for phone numbers
-router.get("/phone-numbers", optionalAuth, adminController.listPhoneNumbers);
+router.get("/phone-numbers", authenticateToken, adminController.listPhoneNumbers);
 router.post("/phone-numbers", authenticateToken, adminController.registerPhoneNumber);
 router.delete("/phone-numbers/:id", authenticateToken, requireAdmin, adminController.deletePhoneNumber);
 router.post("/phone-numbers/:id/default", authenticateToken, requireAdmin, adminController.setDefaultPhoneNumber);
 
 // =========================================================================
-// 3. REPORTS & ANALYTICS
+// 3. REPORTS & ANALYTICS (Protected & Scoped)
 // =========================================================================
-router.get("/reports/campaigns", optionalAuth, reportsController.getCampaignReports);
-router.get("/reports/campaigns/export", optionalAuth, reportsController.exportCampaignReport);
-router.get("/reports/automation", optionalAuth, reportsController.getAutomationReports);
-router.get("/reports/overview", optionalAuth, reportsController.getOverviewAnalytics);
+router.get("/reports/campaigns", authenticateToken, reportsController.getCampaignReports);
+router.get("/reports/campaigns/export", authenticateToken, reportsController.exportCampaignReport);
+router.get("/reports/automation", authenticateToken, reportsController.getAutomationReports);
+router.get("/reports/overview", authenticateToken, reportsController.getOverviewAnalytics);
 
 // Configure Multer for in-memory file uploads (supports .xlsx, .xls, .csv up to 25MB)
 const storage = multer.memoryStorage();
@@ -76,10 +78,10 @@ const upload = multer({
   }
 });
 
-// Upload & Parsing
-router.post("/upload", optionalAuth, upload.single("file"), uploadController.handleFileUpload);
+// Upload & Parsing (Protected)
+router.post("/upload", authenticateToken, uploadLimiter, upload.single("file"), uploadController.handleFileUpload);
 
-// Dedicated Header Media Uploader (Images, Documents, Videos)
+// Dedicated Header Media Uploader with Safe Filename Handling (Images, Documents, Videos up to 30MB)
 const mediaStorage = multer.diskStorage({
   destination: (req, file, cb) => {
     const dir = path.join(__dirname, "..", "..", "public", "uploads");
@@ -88,8 +90,9 @@ const mediaStorage = multer.diskStorage({
   },
   filename: (req, file, cb) => {
     const ext = path.extname(file.originalname) || ".jpg";
+    const safeExt = ext.replace(/[^a-zA-Z0-9.]/g, "").toLowerCase();
     const base = path.basename(file.originalname, ext).replace(/[^a-zA-Z0-9_-]/g, "_");
-    cb(null, `media_${Date.now()}_${base}${ext}`);
+    cb(null, `media_${Date.now()}_${base}${safeExt}`);
   }
 });
 
@@ -107,7 +110,7 @@ const mediaUpload = multer({
 
 const { uploadMedia } = require("../services/metaWhatsAppService");
 
-router.post("/upload/media", optionalAuth, mediaUpload.single("file"), async (req, res) => {
+router.post("/upload/media", authenticateToken, uploadLimiter, mediaUpload.single("file"), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ success: false, message: "No media file provided." });
@@ -153,19 +156,21 @@ router.post("/upload/media", optionalAuth, mediaUpload.single("file"), async (re
   }
 });
 
-// Campaigns
-router.post("/campaigns", optionalAuth, broadcastController.createCampaign);
-router.get("/campaigns", optionalAuth, campaignController.listCampaigns);
-router.get("/campaigns/:campaignId", optionalAuth, campaignController.getCampaignDetails);
-router.delete("/campaigns/:campaignId", optionalAuth, campaignController.deleteCampaign);
-router.get("/campaigns/:campaignId/export", optionalAuth, campaignController.exportCampaignReport);
+// =========================================================================
+// 4. CAMPAIGNS & BROADCAST (Protected & Scoped)
+// =========================================================================
+router.post("/campaigns", authenticateToken, broadcastLimiter, broadcastController.createCampaign);
+router.get("/campaigns", authenticateToken, campaignController.listCampaigns);
+router.get("/campaigns/:campaignId", authenticateToken, campaignController.getCampaignDetails);
+router.delete("/campaigns/:campaignId", authenticateToken, campaignController.deleteCampaign);
+router.get("/campaigns/:campaignId/export", authenticateToken, campaignController.exportCampaignReport);
 
 // Direct single-endpoint Broadcast launch helper
 const { parseExcelBuffer } = require("../services/excelService");
 const { getSetting, db } = require("../config/database");
 const { cleanPhone } = require("../services/metaWhatsAppService");
 
-router.post("/broadcast/send", optionalAuth, upload.single("file"), async (req, res) => {
+router.post("/broadcast/send", authenticateToken, broadcastLimiter, upload.single("file"), async (req, res) => {
   try {
     const { campaignName, templateName, templateLang, phoneColumn, nameColumn, variableMappings, headerMediaUrl, headerMediaId, scheduledTime, phoneId, delayMs, throttleDelay } = req.body || {};
     let contacts = [];
@@ -195,7 +200,7 @@ router.post("/broadcast/send", optionalAuth, upload.single("file"), async (req, 
 
     const rawDelay = delayMs !== undefined ? delayMs : throttleDelay;
     const parsedDelay = (rawDelay !== undefined && rawDelay !== null && String(rawDelay).trim() !== "")
-      ? parseInt(rawDelay, 10)
+      ? Math.min(Math.max(parseInt(rawDelay, 10), 50), 10000)
       : undefined;
 
     req.body = {
@@ -235,7 +240,8 @@ router.post("/broadcast/send", optionalAuth, upload.single("file"), async (req, 
           message: data.message,
           campaignId: campaign.id,
           totalRecipients: campaign.valid_contacts,
-          campaign
+          campaign,
+          costEstimate: data.costEstimate
         });
       }
     });
@@ -245,94 +251,117 @@ router.post("/broadcast/send", optionalAuth, upload.single("file"), async (req, 
   }
 });
 
-// Broadcast & Schedule Controls
-router.post("/campaigns/:campaignId/start", optionalAuth, broadcastController.startCampaign);
-router.post("/campaigns/:campaignId/pause", optionalAuth, broadcastController.pauseCampaign);
-router.post("/campaigns/:campaignId/resume", optionalAuth, broadcastController.resumeCampaign);
-router.post("/campaigns/:campaignId/cancel", optionalAuth, broadcastController.cancelCampaign);
-router.post("/campaigns/:campaignId/throttle", optionalAuth, broadcastController.updateThrottleDelay);
-router.patch("/campaigns/:campaignId/throttle", optionalAuth, broadcastController.updateThrottleDelay);
-router.post("/campaigns/:campaignId/reschedule", optionalAuth, broadcastController.rescheduleCampaign);
-router.post("/campaigns/:campaignId/run-now", optionalAuth, broadcastController.runScheduledNow);
-router.post("/broadcast/test-send", optionalAuth, broadcastController.sendTestMessage);
+// Broadcast & Schedule Controls (Protected & Ownership-Checked)
+router.post("/campaigns/:campaignId/start", authenticateToken, broadcastController.startCampaign);
+router.post("/campaigns/:campaignId/pause", authenticateToken, broadcastController.pauseCampaign);
+router.post("/campaigns/:campaignId/resume", authenticateToken, broadcastController.resumeCampaign);
+router.post("/campaigns/:campaignId/cancel", authenticateToken, broadcastController.cancelCampaign);
+router.post("/campaigns/:campaignId/throttle", authenticateToken, broadcastController.updateThrottleDelay);
+router.patch("/campaigns/:campaignId/throttle", authenticateToken, broadcastController.updateThrottleDelay);
+router.post("/campaigns/:campaignId/reschedule", authenticateToken, broadcastController.rescheduleCampaign);
+router.post("/campaigns/:campaignId/run-now", authenticateToken, broadcastController.runScheduledNow);
+router.post("/broadcast/start", authenticateToken, (req, res) => {
+  req.params.campaignId = req.body?.campaignId || req.query?.campaignId;
+  return broadcastController.startCampaign(req, res);
+});
+router.post("/broadcast/test-send", authenticateToken, broadcastController.sendTestMessage);
 
-// Settings & Connection
-router.get("/settings", optionalAuth, settingsController.getSettings);
-router.post("/settings", optionalAuth, settingsController.updateSettings);
-router.post("/settings/test-connection", optionalAuth, settingsController.handleTestConnection);
-router.get("/settings/verify-meta", optionalAuth, settingsController.handleTestConnection);
-router.post("/settings/verify-meta", optionalAuth, settingsController.handleTestConnection);
+// Short-Lived Stream Token Issuer for SSE
+router.post("/broadcast/stream-token", authenticateToken, broadcastController.getStreamToken);
+
+// =========================================================================
+// 5. SETTINGS & CONNECTION (Protected)
+// =========================================================================
+router.get("/settings", authenticateToken, settingsController.getSettings);
+router.post("/settings", authenticateToken, settingsController.updateSettings);
+router.post("/settings/test-connection", authenticateToken, settingsController.handleTestConnection);
+router.get("/settings/verify-meta", authenticateToken, settingsController.handleTestConnection);
+router.post("/settings/verify-meta", authenticateToken, settingsController.handleTestConnection);
 
 // System Time & Timezone (Deployments + Local)
 const systemController = require("../controllers/systemController");
-router.get("/system/time", optionalAuth, systemController.getSystemTime);
+router.get("/system/time", systemController.getSystemTime);
 router.post("/system/time", authenticateToken, requireAdmin, systemController.updateTimezone);
 
-// System Templates Management
+// =========================================================================
+// 6. SYSTEM TEMPLATES MANAGEMENT (Protected)
+// =========================================================================
 const templateController = require("../controllers/templateController");
-router.get("/templates", optionalAuth, templateController.listTemplates);
-router.get("/templates/categories", optionalAuth, templateController.getCategoriesSummary);
-router.post("/templates/sync", optionalAuth, templateController.syncTemplatesFromMeta);
-router.get("/broadcast/templates", optionalAuth, templateController.listTemplates);
-router.get("/broadcast/templates/categories", optionalAuth, templateController.getCategoriesSummary);
-router.post("/broadcast/templates/sync", optionalAuth, templateController.syncTemplatesFromMeta);
-router.post("/templates", optionalAuth, templateController.addTemplate);
-router.get("/templates/:templateId", optionalAuth, templateController.getTemplate);
+router.get("/templates", authenticateToken, templateController.listTemplates);
+router.get("/templates/categories", authenticateToken, templateController.getCategoriesSummary);
+router.post("/templates/sync", authenticateToken, templateController.syncTemplatesFromMeta);
+router.get("/broadcast/templates", authenticateToken, templateController.listTemplates);
+router.get("/broadcast/templates/categories", authenticateToken, templateController.getCategoriesSummary);
+router.post("/broadcast/templates/sync", authenticateToken, templateController.syncTemplatesFromMeta);
+router.post("/templates", authenticateToken, templateController.addTemplate);
+router.get("/templates/:templateId", authenticateToken, templateController.getTemplate);
 router.delete("/templates/:templateId", authenticateToken, requireAdmin, templateController.deleteTemplate);
 
-// Meta Webhooks & Customer Replies Management
+// =========================================================================
+// 7. META WEBHOOKS & CUSTOMER REPLIES MANAGEMENT
+// =========================================================================
 const webhookController = require("../controllers/webhookController");
+
+// Public Meta Webhook endpoints (Handshake GET + HMAC-verified POST)
 router.get("/webhook", webhookController.handleVerification);
 router.post("/webhook", webhookController.handleIncomingEvent);
-router.get("/webhook/config", optionalAuth, webhookController.getConfig);
-router.post("/webhook/generate-token", optionalAuth, webhookController.generateNewToken);
-router.post("/webhook/token", optionalAuth, webhookController.saveToken);
-router.post("/webhook/test-simulate", optionalAuth, webhookController.simulateTestReply);
-router.get("/webhook/test-handshake", optionalAuth, webhookController.testHandshake);
-router.post("/webhook/tunnel/restart", optionalAuth, webhookController.restartTunnel);
 
-router.get("/replies", optionalAuth, webhookController.listReplies);
-router.get("/inbox/replies", optionalAuth, webhookController.listReplies);
-router.get("/replies/auto-reply-settings", optionalAuth, webhookController.getAutoReplySettings);
-router.post("/replies/auto-reply-settings", optionalAuth, webhookController.updateAutoReplySettings);
-router.post("/replies/:id/reply", optionalAuth, webhookController.sendManualReply);
-router.post("/replies/:id/mark-read", optionalAuth, webhookController.markAsRead);
-router.post("/replies/mark-all-read", optionalAuth, webhookController.markAllAsRead);
-router.delete("/replies/:id", optionalAuth, webhookController.deleteReply);
-router.delete("/inbox/conversation/:phone", optionalAuth, webhookController.deleteConversation);
-router.delete("/inbox/conversation", optionalAuth, webhookController.deleteConversation);
-router.delete("/replies/conversation/:phone", optionalAuth, webhookController.deleteConversation);
+// Protected Webhook configuration & controls
+router.get("/webhook/config", authenticateToken, webhookController.getConfig);
+router.post("/webhook/generate-token", authenticateToken, requireAdmin, webhookController.generateNewToken);
+router.post("/webhook/token", authenticateToken, requireAdmin, webhookController.saveToken);
+router.post("/webhook/test-simulate", authenticateToken, webhookController.simulateTestReply);
+router.get("/webhook/test-handshake", authenticateToken, webhookController.testHandshake);
+router.post("/webhook/tunnel/restart", authenticateToken, requireAdmin, webhookController.restartTunnel);
 
-// Inbound Customer Media Streaming & Download Proxy
-router.get("/media/inbound/:mediaId", async (req, res) => {
+// Customer Replies & Inbox (Protected & Scoped)
+router.get("/replies", authenticateToken, webhookController.listReplies);
+router.get("/inbox/replies", authenticateToken, webhookController.listReplies);
+router.get("/replies/auto-reply-settings", authenticateToken, webhookController.getAutoReplySettings);
+router.post("/replies/auto-reply-settings", authenticateToken, webhookController.updateAutoReplySettings);
+router.post("/replies/:id/reply", authenticateToken, webhookController.sendManualReply);
+router.post("/replies/:id/mark-read", authenticateToken, webhookController.markAsRead);
+router.post("/replies/mark-all-read", authenticateToken, webhookController.markAllAsRead);
+router.delete("/replies/:id", authenticateToken, webhookController.deleteReply);
+router.delete("/inbox/conversation/:phone", authenticateToken, webhookController.deleteConversation);
+router.delete("/inbox/conversation", authenticateToken, webhookController.deleteConversation);
+router.delete("/replies/conversation/:phone", authenticateToken, webhookController.deleteConversation);
+
+// Inbound Customer Media Streaming & Download Proxy with Path Traversal Protection
+router.get("/media/inbound/:mediaId", authenticateToken, async (req, res) => {
   try {
     const { mediaId } = req.params;
     if (!mediaId || !/^[a-zA-Z0-9_.-]+$/.test(mediaId)) {
-      return res.status(400).json({ success: false, message: "Invalid media ID" });
+      return res.status(400).json({ success: false, message: "Invalid media ID." });
     }
 
-    const cleanMediaId = mediaId.replace(/\.[a-zA-Z0-9]+$/, "");
+    const cleanMediaId = path.basename(mediaId).replace(/\.[a-zA-Z0-9]+$/, "");
     const inboundDir = path.resolve(__dirname, "../../public/uploads/inbound");
     if (!fs.existsSync(inboundDir)) {
       fs.mkdirSync(inboundDir, { recursive: true });
     }
 
-    // 1. Check if already cached on disk (matching cleanMediaId.* or mediaId)
+    // 1. Check if already cached on disk
     try {
       const files = fs.readdirSync(inboundDir).filter(f => f.startsWith(`${cleanMediaId}.`) || f === mediaId);
       if (files.length > 0) {
-        const filePath = path.join(inboundDir, files[0]);
-        res.setHeader("Cache-Control", "public, max-age=604800, immutable");
-        return res.sendFile(filePath);
+        const filePath = path.resolve(inboundDir, files[0]);
+        if (filePath.startsWith(inboundDir) && fs.existsSync(filePath)) {
+          res.setHeader("Cache-Control", "public, max-age=604800, immutable");
+          return res.sendFile(filePath);
+        }
       }
     } catch (e) {}
 
     // 2. Download from Meta Cloud API on the fly
     const { downloadAndSaveInboundMedia } = require("../services/metaWhatsAppService");
     const downloadRes = await downloadAndSaveInboundMedia(cleanMediaId);
-    if (downloadRes?.localPath && fs.existsSync(downloadRes.localPath)) {
-      res.setHeader("Cache-Control", "public, max-age=604800, immutable");
-      return res.sendFile(downloadRes.localPath);
+    if (downloadRes?.localPath) {
+      const resolvedPath = path.resolve(downloadRes.localPath);
+      if (resolvedPath.startsWith(inboundDir) && fs.existsSync(resolvedPath)) {
+        res.setHeader("Cache-Control", "public, max-age=604800, immutable");
+        return res.sendFile(resolvedPath);
+      }
     }
 
     return res.status(404).json({ success: false, message: "Inbound media not found or could not be downloaded." });
@@ -342,15 +371,13 @@ router.get("/media/inbound/:mediaId", async (req, res) => {
   }
 });
 
-// Direct inbox reply by phone/contact (Supports formatted multi-line text, images, and videos)
-const { sendTextMessage, sendMediaMessage } = require("../services/metaWhatsAppService");
-
-router.post("/inbox/reply", optionalAuth, mediaUpload.single("file"), async (req, res) => {
+// Direct inbox reply by phone/contact (Protected)
+router.post("/inbox/reply", authenticateToken, mediaUpload.single("file"), async (req, res) => {
   try {
     const { to, message, replyId, mediaUrl, mediaId, mediaType: clientMediaType } = req.body || {};
     const text = message !== undefined ? String(message) : (req.body?.replyText !== undefined ? String(req.body.replyText) : "");
 
-    const targetPhone = cleanPhone(to || "", getSetting("DEFAULT_COUNTRY_CODE") || "91");
+    const targetPhone = metaWhatsAppService.cleanPhone(to || "", getSetting("DEFAULT_COUNTRY_CODE") || "91");
     if (!targetPhone) {
       return res.status(400).json({ success: false, message: "Recipient phone number is required." });
     }
@@ -364,7 +391,6 @@ router.post("/inbox/reply", optionalAuth, mediaUpload.single("file"), async (req
     let finalMediaType = clientMediaType || null;
     let metaMessageId = null;
 
-    // Case 1: File attachment uploaded (Image or Video)
     if (req.file) {
       const isVideo = req.file.mimetype.startsWith("video/");
       const isImage = req.file.mimetype.startsWith("image/");
@@ -378,7 +404,7 @@ router.post("/inbox/reply", optionalAuth, mediaUpload.single("file"), async (req
       let metaMediaId = null;
       try {
         const fileBuffer = fs.readFileSync(req.file.path);
-        const metaUp = await uploadMedia({
+        const metaUp = await metaWhatsAppService.uploadMedia({
           fileBuffer,
           fileName: req.file.originalname,
           mimeType: req.file.mimetype
@@ -390,7 +416,7 @@ router.post("/inbox/reply", optionalAuth, mediaUpload.single("file"), async (req
         console.warn("[Inbox Reply] Direct Meta upload note:", uErr.message);
       }
 
-      sendRes = await sendMediaMessage({
+      sendRes = await metaWhatsAppService.sendMediaMessage({
         to: targetPhone,
         type: finalMediaType,
         mediaId: metaMediaId || null,
@@ -398,13 +424,11 @@ router.post("/inbox/reply", optionalAuth, mediaUpload.single("file"), async (req
         caption: text.trim() ? text : ""
       });
       metaMessageId = sendRes.messageId;
-    } 
-    // Case 2: Media URL or Media ID provided without direct file upload
-    else if (finalMediaUrl || mediaId) {
+    } else if (finalMediaUrl || mediaId) {
       const isVideo = (finalMediaUrl && finalMediaUrl.match(/\.(mp4|3gp|mov|webm)(\?.*)?$/i)) || clientMediaType === "video";
       finalMediaType = isVideo ? "video" : (clientMediaType || "image");
 
-      sendRes = await sendMediaMessage({
+      sendRes = await metaWhatsAppService.sendMediaMessage({
         to: targetPhone,
         type: finalMediaType,
         mediaId: mediaId || null,
@@ -412,43 +436,55 @@ router.post("/inbox/reply", optionalAuth, mediaUpload.single("file"), async (req
         caption: text.trim() ? text : ""
       });
       metaMessageId = sendRes.messageId;
-    } 
-    // Case 3: Pure text message (formatted with spacing / line breaks)
-    else {
-      sendRes = await sendTextMessage({ to: targetPhone, body: text });
+    } else {
+      sendRes = await metaWhatsAppService.sendTextMessage({ to: targetPhone, body: text });
       metaMessageId = sendRes.messageId;
     }
 
     const assignedId = metaMessageId || `out_${Date.now()}`;
     const displayText = text || (finalMediaType ? `[${finalMediaType.toUpperCase()}]` : "");
+    const replyUserId = req.user?.id || null;
+    let existingGuestName = "Customer";
+    try {
+      const prior = db.prepare("SELECT customer_name FROM customer_replies WHERE from_phone = ? AND customer_name NOT IN ('Customer', 'Demo Customer') AND customer_name IS NOT NULL ORDER BY id DESC LIMIT 1").get(targetPhone);
+      if (prior?.customer_name) {
+        existingGuestName = prior.customer_name;
+      } else {
+        const recip = db.prepare("SELECT contact_name FROM campaign_recipients WHERE clean_phone = ? AND contact_name IS NOT NULL LIMIT 1").get(targetPhone);
+        if (recip?.contact_name) {
+          existingGuestName = recip.contact_name;
+        }
+      }
+    } catch (e) {}
 
     db.prepare(`
       INSERT INTO customer_replies (
         wa_message_id, from_phone, customer_name, message_type,
         message_body, reply_text, media_url, media_type, media_caption,
-        reply_sent_at, reply_status, is_read, received_at
-      ) VALUES (?, ?, 'Customer', 'outbound', ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, 'SENT', 1, CURRENT_TIMESTAMP)
+        reply_sent_at, reply_status, is_read, user_id, received_at
+      ) VALUES (?, ?, ?, 'outbound', ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, 'SENT', 1, ?, CURRENT_TIMESTAMP)
     `).run(
       assignedId,
       targetPhone,
+      existingGuestName,
       displayText,
       displayText,
       finalMediaUrl,
       finalMediaType,
-      text || null
+      text || null,
+      replyUserId
     );
 
-    // Notify connected SSE telemetry / browser tabs of outgoing reply
     try {
       broadcastEngine.emit("webhook:reply_updated", {
         wa_message_id: assignedId,
         from_phone: targetPhone,
-        message_type: 'outbound',
+        message_type: "outbound",
         message_body: displayText,
         reply_text: displayText,
         media_url: finalMediaUrl,
         media_type: finalMediaType,
-        reply_status: 'SENT'
+        reply_status: "SENT"
       });
     } catch (e) {}
 
@@ -465,30 +501,34 @@ router.post("/inbox/reply", optionalAuth, mediaUpload.single("file"), async (req
   }
 });
 
-// Google Sheets Booking Automation
+// =========================================================================
+// 8. GOOGLE SHEETS & BOOKING AUTOMATION (Protected & Scoped)
+// =========================================================================
 const automationController = require("../controllers/automationController");
-router.get("/automation/config", optionalAuth, automationController.getConfig);
-router.post("/automation/config", optionalAuth, automationController.updateConfig);
-router.get("/automation/preview", optionalAuth, automationController.previewSheet);
-router.post("/automation/preview", optionalAuth, automationController.previewSheet);
-router.post("/automation/run-now", optionalAuth, automationController.runNow);
-router.post("/automation/evaluate", optionalAuth, automationController.runNow);
-router.get("/automation/history", optionalAuth, automationController.getHistory);
-router.get("/automation/status", optionalAuth, automationController.getStatus);
-router.post("/automation/contacts", optionalAuth, automationController.saveContacts);
-router.get("/automation/contacts", optionalAuth, automationController.getContacts);
-router.delete("/automation/contacts", optionalAuth, automationController.clearContacts);
+router.get("/automation/config", authenticateToken, automationController.getConfig);
+router.post("/automation/config", authenticateToken, automationController.updateConfig);
+router.get("/automation/preview", authenticateToken, automationController.previewSheet);
+router.post("/automation/preview", authenticateToken, automationController.previewSheet);
+router.post("/automation/run-now", authenticateToken, automationController.runNow);
+router.post("/automation/evaluate", authenticateToken, automationController.runNow);
+router.get("/automation/history", authenticateToken, automationController.getHistory);
+router.get("/automation/status", authenticateToken, automationController.getStatus);
+router.post("/automation/contacts", authenticateToken, automationController.saveContacts);
+router.get("/automation/contacts", authenticateToken, automationController.getContacts);
+router.delete("/automation/contacts", authenticateToken, automationController.clearContacts);
 
-// Server-Sent Events (SSE) for Real-Time Broadcast Progress & Live Logs
-router.get("/broadcast/stream", (req, res) => {
+// =========================================================================
+// 9. SERVER-SENT EVENTS (SSE) STREAM (Dedicated Stream Token Auth)
+// =========================================================================
+router.get("/broadcast/stream", authenticateStreamToken, (req, res) => {
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
-  res.setHeader("X-Accel-Buffering", "no"); // Disable buffering for Nginx/proxies
+  res.setHeader("X-Accel-Buffering", "no");
   res.flushHeaders();
 
-  // Send initial connected heartbeat
-  res.write(`data: ${JSON.stringify({ type: "init", message: "SSE connected" })}\n\n`);
+  // Initial connection heartbeat
+  res.write(`data: ${JSON.stringify({ type: "init", message: "SSE stream connected", userId: req.user.id })}\n\n`);
 
   const onProgress = (data) => {
     res.write(`data: ${JSON.stringify({ type: "progress", TYPE: "PROGRESS", ...data })}\n\n`);
@@ -521,7 +561,6 @@ router.get("/broadcast/stream", (req, res) => {
   broadcastEngine.on("webhook:reply_updated", onReplyUpdated);
   broadcastEngine.on("webhook:status", onWebhookStatus);
 
-  // Keep connection alive with ping every 25s
   const keepAliveTimer = setInterval(() => {
     res.write(": ping\n\n");
   }, 25000);

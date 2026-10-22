@@ -1,7 +1,51 @@
+const crypto = require("crypto");
 const webhookService = require("../services/webhookService");
 const tunnelService = require("../services/tunnelService");
-const { getSetting } = require("../config/database");
+const { getSetting, db } = require("../config/database");
 const config = require("../config/env");
+
+/**
+ * Validates incoming Meta X-Hub-Signature-256 against raw request payload
+ */
+function verifyMetaSignature(req) {
+  const signature = req.headers["x-hub-signature-256"];
+  const appSecret = config.META_APP_SECRET || getSetting("META_APP_SECRET") || process.env.META_APP_SECRET;
+
+  if (config.NODE_ENV === "production") {
+    if (!appSecret) {
+      console.error("[Webhook Security] META_APP_SECRET is not configured in production. Rejecting request.");
+      return false;
+    }
+    if (!signature) {
+      console.warn("[Webhook Security] Missing X-Hub-Signature-256 header in production request.");
+      return false;
+    }
+  }
+
+  // If no app secret configured in non-production, log warning and allow
+  if (!appSecret) {
+    return true;
+  }
+
+  if (!signature || !signature.startsWith("sha256=")) {
+    return false;
+  }
+
+  const clientHash = signature.substring(7);
+  const rawBody = req.rawBody || Buffer.from(JSON.stringify(req.body || {}));
+  const expectedHash = crypto.createHmac("sha256", appSecret).update(rawBody).digest("hex");
+
+  try {
+    const clientBuf = Buffer.from(clientHash, "hex");
+    const expectedBuf = Buffer.from(expectedHash, "hex");
+    if (clientBuf.length !== expectedBuf.length) {
+      return false;
+    }
+    return crypto.timingSafeEqual(clientBuf, expectedBuf);
+  } catch (err) {
+    return false;
+  }
+}
 
 /**
  * Handles Meta Webhook Verification Handshake (GET /webhook or GET /api/webhook)
@@ -11,11 +55,10 @@ function handleVerification(req, res) {
     const { verified, challenge } = webhookService.verifyHandshake(req.query);
 
     if (verified) {
-      console.log(`[Webhook Handshake] Meta verification SUCCEEDED for challenge: ${challenge}`);
-      // Must respond with the plain challenge string and HTTP 200
+      console.log(`[Webhook Handshake] Meta verification challenge accepted.`);
       return res.status(200).send(challenge);
     } else {
-      console.warn(`[Webhook Handshake] Meta verification FAILED for query:`, req.query);
+      console.warn(`[Webhook Handshake] Meta verification FAILED for provided token.`);
       return res.status(403).send("Forbidden: Invalid verification token or hub.mode");
     }
   } catch (error) {
@@ -28,12 +71,29 @@ function handleVerification(req, res) {
  * Handles Meta Webhook Event Notification (POST /webhook or POST /api/webhook)
  */
 function handleIncomingEvent(req, res) {
-  // Acknowledge immediately to Meta with 200 OK to avoid timeouts
+  // 1. Verify Meta signature before accepting or processing
+  const isValidSig = verifyMetaSignature(req);
+  if (!isValidSig) {
+    console.warn("[Webhook Security] Rejected incoming webhook with invalid or missing X-Hub-Signature-256.");
+    return res.status(403).json({ success: false, message: "Forbidden: Invalid webhook signature." });
+  }
+
+  // 2. Acknowledge immediately to Meta with 200 OK
   res.status(200).send("EVENT_RECEIVED");
 
-  // Asynchronously process the payload
+  // 3. Durably log & asynchronously process payload without exposing PII in console
   const payload = req.body;
-  console.log("[Webhook] Received incoming Meta notification:", JSON.stringify(payload));
+  const entriesCount = Array.isArray(payload?.entry) ? payload.entry.length : 0;
+  console.log(`[Webhook] Processing incoming Meta notification (entries: ${entriesCount})`);
+
+  // Durable event recording for auditing and recovery
+  try {
+    const eventId = payload?.entry?.[0]?.id || `evt_${Date.now()}_${crypto.randomBytes(4).toString("hex")}`;
+    db.prepare(`
+      INSERT OR IGNORE INTO incoming_webhook_events (event_id, event_type, status, created_at)
+      VALUES (?, 'META_NOTIFICATION', 'PROCESSING', CURRENT_TIMESTAMP)
+    `).run(eventId);
+  } catch (e) {}
 
   webhookService
     .processIncomingPayload(payload)
@@ -43,7 +103,7 @@ function handleIncomingEvent(req, res) {
       }
     })
     .catch(err => {
-      console.error("[WebhookController] Error processing payload:", err);
+      console.error("[WebhookController] Error processing payload:", err.message);
     });
 }
 
@@ -52,7 +112,14 @@ function handleIncomingEvent(req, res) {
  */
 function getConfig(req, res) {
   try {
-    const verifyToken = webhookService.getVerifyToken();
+    const user = req.user;
+    let verifyToken = webhookService.getVerifyToken();
+    
+    // Mask verify token for non-administrators
+    if (user && user.role !== "ADMIN" && verifyToken) {
+      verifyToken = verifyToken.substring(0, 4) + "••••••••" + verifyToken.substring(verifyToken.length - 4);
+    }
+
     const tunnelStatus = tunnelService.getStatus();
     const publicTunnelUrl = tunnelStatus.url || getSetting("PUBLIC_WEBHOOK_URL");
     const host = req.get("host") || `localhost:${config.PORT}`;
@@ -61,7 +128,8 @@ function getConfig(req, res) {
     const webhookUrl = publicTunnelUrl ? `${publicTunnelUrl}/webhook` : `${protocol}://${host}/webhook`;
     const altWebhookUrl = publicTunnelUrl ? `${publicTunnelUrl}/api/webhook` : `${protocol}://${host}/api/webhook`;
 
-    const repliesStats = webhookService.getReplies({ limit: 1 });
+    const scopedUserId = user && user.role !== "ADMIN" ? user.id : null;
+    const repliesStats = webhookService.getReplies({ limit: 1, userId: scopedUserId });
 
     return res.status(200).json({
       success: true,
@@ -125,11 +193,11 @@ async function testHandshake(req, res) {
 }
 
 /**
- * Restarts the background tunnel
+ * Restarts the background tunnel (Admin Only)
  */
 async function restartTunnel(req, res) {
   try {
-    console.log("[WebhookController] Manual tunnel restart requested from UI...");
+    console.log("[WebhookController] Manual tunnel restart requested...");
     const result = await tunnelService.restart();
     return res.status(200).json({
       success: true,
@@ -143,7 +211,7 @@ async function restartTunnel(req, res) {
 }
 
 /**
- * Generates a new secure random verify token
+ * Generates a new secure random verify token (Admin Only)
  */
 function generateNewToken(req, res) {
   try {
@@ -162,7 +230,7 @@ function generateNewToken(req, res) {
 }
 
 /**
- * Saves a custom verify token
+ * Saves a custom verify token (Admin Only)
  */
 function saveToken(req, res) {
   try {
@@ -186,18 +254,20 @@ function saveToken(req, res) {
 }
 
 /**
- * Lists customer replies with search, filter, and pagination
+ * Lists customer replies with tenant scoping
  */
 function listReplies(req, res) {
   try {
     const { limit, offset, search, campaignId, unreadOnly } = req.query;
+    const scopedUserId = req.user?.role === "ADMIN" ? null : req.user?.id;
 
     const result = webhookService.getReplies({
       limit,
       offset,
       search,
       campaignId,
-      unreadOnly
+      unreadOnly,
+      userId: scopedUserId
     });
 
     return res.status(200).json({
@@ -281,7 +351,7 @@ function deleteConversation(req, res) {
 }
 
 /**
- * Simulates an incoming customer reply for local testing without external tunnel
+ * Simulates an incoming customer reply (Restricted to authenticated testing)
  */
 function simulateTestReply(req, res) {
   try {
@@ -374,6 +444,7 @@ function updateAutoReplySettings(req, res) {
 module.exports = {
   handleVerification,
   handleIncomingEvent,
+  verifyMetaSignature,
   getConfig,
   generateNewToken,
   saveToken,

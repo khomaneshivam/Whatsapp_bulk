@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "tunnel": "node tunnel.js"
+    "tunnel": "node tunnel.js",
+    "test": "node --test tests/**/*.test.js"
   },
   "keywords": [
     "whatsapp",

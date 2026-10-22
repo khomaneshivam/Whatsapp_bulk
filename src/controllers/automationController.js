@@ -89,12 +89,13 @@ async function runNow(req, res) {
 }
 
 /**
- * Get automated message dispatch history
+ * Get automated message dispatch history (scoped by user if not admin)
  */
 async function getHistory(req, res) {
   try {
     const limit = parseInt(req.query.limit, 10) || 100;
-    const history = bookingAutomationService.getDispatchHistory(limit);
+    const scopedUserId = req.user?.role === "ADMIN" ? null : req.user?.id;
+    const history = bookingAutomationService.getDispatchHistory(limit, scopedUserId);
     return res.status(200).json({
       success: true,
       data: history
@@ -121,12 +122,13 @@ async function saveContacts(req, res) {
 }
 
 /**
- * Get permanently saved uploaded contacts
+ * Get permanently saved uploaded contacts (scoped by user if not admin)
  */
 async function getContacts(req, res) {
   try {
     const limit = parseInt(req.query.limit, 10) || 500;
-    const contacts = bookingAutomationService.getUploadedContacts(limit);
+    const scopedUserId = req.user?.role === "ADMIN" ? null : req.user?.id;
+    const contacts = bookingAutomationService.getUploadedContacts(limit, scopedUserId);
     return res.status(200).json({
       success: true,
       data: contacts,
@@ -139,11 +141,12 @@ async function getContacts(req, res) {
 }
 
 /**
- * Clear all permanently saved uploaded contacts
+ * Clear permanently saved uploaded contacts (scoped by user if not admin)
  */
 async function clearContacts(req, res) {
   try {
-    const result = bookingAutomationService.clearUploadedContacts();
+    const scopedUserId = req.user?.role === "ADMIN" ? null : req.user?.id;
+    const result = bookingAutomationService.clearUploadedContacts(scopedUserId);
     return res.status(200).json({
       success: true,
       message: "Uploaded contacts cleared successfully.",

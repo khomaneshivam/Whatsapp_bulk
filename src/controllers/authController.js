@@ -32,39 +32,57 @@ async function register(req, res) {
     if (!email || !String(email).trim() || !email.includes("@")) {
       return res.status(400).json({ success: false, message: "A valid email address is required." });
     }
-    if (!password || String(password).length < 6) {
-      return res.status(400).json({ success: false, message: "Password must be at least 6 characters long." });
+    if (!password || String(password).length < 8) {
+      return res.status(400).json({ success: false, message: "Password must be at least 8 characters long." });
     }
 
     const cleanEmail = String(email).trim().toLowerCase();
     const cleanName = String(name).trim();
     const cleanPhone = phone ? String(phone).trim() : null;
 
-    // Check if email already registered
-    const existing = db.prepare("SELECT id FROM users WHERE email = ? COLLATE NOCASE").get(cleanEmail);
-    if (existing) {
-      return res.status(409).json({
-        success: false,
-        message: "An account with this email address already exists. Please log in instead."
-      });
-    }
-
     // Hash password
     const passwordHash = await bcrypt.hash(password, 10);
     const userId = crypto.randomUUID();
 
-    // Check if this is the very first user in the system -> make them Admin
-    const userCount = db.prepare("SELECT COUNT(*) as count FROM users").get().count;
-    const role = userCount === 0 ? "ADMIN" : "USER";
+    // Check optional admin bootstrap token from header or body
+    const bootstrapToken = req.headers["x-admin-bootstrap-token"] || req.body?.adminBootstrapToken;
+    const configuredBootstrapToken = process.env.ADMIN_BOOTSTRAP_TOKEN;
 
-    // Assign default phone number if available
-    const defaultPhone = db.prepare("SELECT id FROM waba_phone_numbers WHERE is_default = 1 LIMIT 1").get();
-    const assignedPhoneId = defaultPhone ? defaultPhone.id : null;
+    // Atomically check existing user and insert within SQLite transaction
+    let role = "USER";
+    let assignedPhoneId = null;
 
-    db.prepare(`
-      INSERT INTO users (id, name, email, phone, password_hash, role, status, assigned_phone_id)
-      VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE', ?)
-    `).run(userId, cleanName, cleanEmail, cleanPhone, passwordHash, role, assignedPhoneId);
+    db.exec("BEGIN IMMEDIATE TRANSACTION;");
+    try {
+      const existing = db.prepare("SELECT id FROM users WHERE email = ? COLLATE NOCASE").get(cleanEmail);
+      if (existing) {
+        db.exec("ROLLBACK;");
+        return res.status(409).json({
+          success: false,
+          message: "An account with this email address already exists. Please log in instead."
+        });
+      }
+
+      const userCount = db.prepare("SELECT COUNT(*) as count FROM users").get().count;
+      if (configuredBootstrapToken && bootstrapToken === configuredBootstrapToken) {
+        role = "ADMIN";
+      } else {
+        role = userCount === 0 ? "ADMIN" : "USER";
+      }
+
+      const defaultPhone = db.prepare("SELECT id FROM waba_phone_numbers WHERE is_default = 1 LIMIT 1").get();
+      assignedPhoneId = defaultPhone ? defaultPhone.id : null;
+
+      db.prepare(`
+        INSERT INTO users (id, name, email, phone, password_hash, role, status, assigned_phone_id)
+        VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE', ?)
+      `).run(userId, cleanName, cleanEmail, cleanPhone, passwordHash, role, assignedPhoneId);
+
+      db.exec("COMMIT;");
+    } catch (txErr) {
+      db.exec("ROLLBACK;");
+      throw txErr;
+    }
 
     const newUser = db.prepare(`
       SELECT id, name, email, phone, role, status, assigned_phone_id, created_at
