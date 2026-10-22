@@ -36,16 +36,23 @@ export default function Topbar({ activeTab, setActiveTab, setMobileOpen }) {
   useEffect(() => {
     checkMetaHealth();
     fetchActiveNumber();
-  }, []);
+  }, [token]);
 
   async function checkMetaHealth() {
     setIsVerifying(true);
     try {
-      const res = await fetch('/api/settings/verify-meta');
+      const activeToken = token || localStorage.getItem('token');
+      const headers = activeToken ? { 'Authorization': `Bearer ${activeToken}` } : {};
+      const res = await fetch('/api/settings/verify-meta', { headers });
       const data = await res.json();
-      setMetaStatus({ connected: Boolean(data.success), loading: false });
+      setMetaStatus({ 
+        connected: Boolean(data.success), 
+        loading: false,
+        message: data.message,
+        hint: data.hint
+      });
     } catch (err) {
-      setMetaStatus({ connected: false, loading: false });
+      setMetaStatus({ connected: false, loading: false, message: err.message });
     } finally {
       setIsVerifying(false);
     }
@@ -148,7 +155,7 @@ export default function Topbar({ activeTab, setActiveTab, setMobileOpen }) {
         {/* Meta Health Pill */}
         <div 
           onClick={checkMetaHealth}
-          title="Click to re-verify Meta Cloud API handshake"
+          title={metaStatus.connected ? 'Meta Cloud API Connected & Ready' : (metaStatus.hint || metaStatus.message || 'Meta API Offline - Click to re-verify')}
           style={{
             display: 'flex',
             alignItems: 'center',

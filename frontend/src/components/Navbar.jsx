@@ -22,15 +22,17 @@ export default function Navbar({ activeTab, setActiveTab }) {
   useEffect(() => {
     checkMetaHealth();
     fetchActiveNumber();
-  }, []);
+  }, [token]);
 
   async function checkMetaHealth() {
     try {
-      const res = await fetch('/api/settings/verify-meta');
+      const activeToken = token || localStorage.getItem('token');
+      const headers = activeToken ? { 'Authorization': `Bearer ${activeToken}` } : {};
+      const res = await fetch('/api/settings/verify-meta', { headers });
       const data = await res.json();
-      setMetaStatus({ connected: Boolean(data.success), loading: false });
+      setMetaStatus({ connected: Boolean(data.success), loading: false, message: data.message, hint: data.hint });
     } catch (err) {
-      setMetaStatus({ connected: false, loading: false });
+      setMetaStatus({ connected: false, loading: false, message: err.message });
     }
   }
 

@@ -190,7 +190,9 @@ export default function SettingsPage() {
     setVerifying(true);
     setMetaHealth(null);
     try {
-      const res = await fetch('/api/settings/verify-meta');
+      const activeToken = token || localStorage.getItem('token');
+      const headers = activeToken ? { 'Authorization': `Bearer ${activeToken}` } : {};
+      const res = await fetch('/api/settings/verify-meta', { headers });
       const data = await res.json();
       setMetaHealth(data);
     } catch (err) {

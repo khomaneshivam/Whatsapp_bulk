@@ -11,7 +11,7 @@ const settingsController = require("../controllers/settingsController");
 const authController = require("../controllers/authController");
 const adminController = require("../controllers/adminController");
 const reportsController = require("../controllers/reportsController");
-const { authenticateToken, requireAdmin, authenticateStreamToken } = require("../middleware/authMiddleware");
+const { authenticateToken, requireAdmin, authenticateStreamToken, optionalAuth } = require("../middleware/authMiddleware");
 const { authLimiter, broadcastLimiter, uploadLimiter } = require("../middleware/rateLimiter");
 const broadcastEngine = require("../services/broadcastEngine");
 const metaWhatsAppService = require("../services/metaWhatsAppService");
@@ -275,7 +275,7 @@ router.post("/broadcast/stream-token", authenticateToken, broadcastController.ge
 router.get("/settings", authenticateToken, settingsController.getSettings);
 router.post("/settings", authenticateToken, settingsController.updateSettings);
 router.post("/settings/test-connection", authenticateToken, settingsController.handleTestConnection);
-router.get("/settings/verify-meta", authenticateToken, settingsController.handleTestConnection);
+router.get("/settings/verify-meta", optionalAuth, settingsController.handleTestConnection);
 router.post("/settings/verify-meta", authenticateToken, settingsController.handleTestConnection);
 
 // System Time & Timezone (Deployments + Local)
