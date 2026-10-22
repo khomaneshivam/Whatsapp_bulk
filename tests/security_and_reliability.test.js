@@ -224,6 +224,19 @@ describe("Security, Multi-Tenant Isolation & WhatsApp Broadcast Reliability Test
       }
     });
 
+    test("Database re-initialization does not alter or promote existing USER roles to ADMIN", async () => {
+      // userA was seeded as a standard USER
+      const beforeUser = db.prepare("SELECT role FROM users WHERE id = ?").get(userA.id);
+      assert.strictEqual(beforeUser.role, "USER");
+
+      // Trigger database re-initialization
+      delete require.cache[require.resolve("../src/config/database")];
+      const reloadedDbModule = require("../src/config/database");
+
+      const afterUser = reloadedDbModule.db.prepare("SELECT role FROM users WHERE id = ?").get(userA.id);
+      assert.strictEqual(afterUser.role, "USER");
+    });
+
     test("Non-admin user cannot register WABA phone numbers (403 Forbidden)", async () => {
       const res = await fetch(`${baseUrl}/api/admin/phone-numbers`, {
         method: "POST",

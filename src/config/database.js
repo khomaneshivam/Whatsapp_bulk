@@ -341,24 +341,6 @@ function initializeDatabase() {
     console.warn("[DB Migration] automated_booking_dispatches user column check:", migErr4.message);
   }
 
-  // Promote all existing accounts to ADMIN so all platform operators have full visibility
-  try {
-    db.prepare("UPDATE users SET role = 'ADMIN'").run();
-  } catch (e) {}
-
-  // Backfill unassigned/legacy customer_replies, campaigns, and dispatches to primary admin
-  try {
-    const adminUser = db.prepare("SELECT id FROM users ORDER BY created_at ASC LIMIT 1").get();
-    if (adminUser?.id) {
-      db.prepare("UPDATE customer_replies SET user_id = ? WHERE user_id IS NULL OR user_id = ''").run(adminUser.id);
-      db.prepare("UPDATE campaigns SET user_id = ? WHERE user_id IS NULL OR user_id = ''").run(adminUser.id);
-      db.prepare("UPDATE automated_booking_dispatches SET user_id = ? WHERE user_id IS NULL OR user_id = ''").run(adminUser.id);
-      db.prepare("UPDATE automated_booking_contacts SET user_id = ? WHERE user_id IS NULL OR user_id = ''").run(adminUser.id);
-    }
-  } catch (backfillErr) {
-    console.warn("[DB Migration] User ID backfill notice:", backfillErr.message);
-  }
-
   // Seed default templates if empty
   try {
     const templateCount = db.prepare("SELECT COUNT(*) as count FROM templates").get().count;
