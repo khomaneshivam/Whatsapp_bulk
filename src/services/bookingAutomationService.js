@@ -795,7 +795,7 @@ class BookingAutomationService {
                checkin_date, checkout_date, trigger_type, template_name, meta_message_id,
                status, error_message, dispatched_at
         FROM automated_booking_dispatches
-        WHERE (user_id = ? OR user_id IS NULL)
+        WHERE (user_id = ? OR user_id IS NULL OR user_id = 'admin_root')
         ORDER BY dispatched_at DESC
         LIMIT ?
       `).all(userId, limit);
@@ -1111,7 +1111,7 @@ class BookingAutomationService {
         SELECT id, booking_id, guest_name, phone_number, clean_phone, property_name,
                checkin_date, checkout_date, raw_data, source, created_at
         FROM automated_booking_contacts
-        WHERE (user_id = ? OR user_id IS NULL)
+        WHERE (user_id = ? OR user_id IS NULL OR user_id = 'admin_root')
         ORDER BY id DESC
         LIMIT ?
       `).all(userId, limit);

@@ -508,16 +508,16 @@ async function claimLegacyHistory(req, res) {
 
     db.exec("BEGIN IMMEDIATE TRANSACTION;");
     try {
-      const campRes = db.prepare("UPDATE campaigns SET user_id = ? WHERE user_id IS NULL").run(userId);
+      const campRes = db.prepare("UPDATE campaigns SET user_id = ? WHERE user_id IS NULL OR user_id = '' OR user_id = 'admin_root'").run(userId);
       campaignsCount = campRes.changes;
 
-      const replyRes = db.prepare("UPDATE customer_replies SET user_id = ? WHERE user_id IS NULL").run(userId);
+      const replyRes = db.prepare("UPDATE customer_replies SET user_id = ? WHERE user_id IS NULL OR user_id = '' OR user_id = 'admin_root'").run(userId);
       repliesCount = replyRes.changes;
 
-      const dispRes = db.prepare("UPDATE automated_booking_dispatches SET user_id = ? WHERE user_id IS NULL").run(userId);
+      const dispRes = db.prepare("UPDATE automated_booking_dispatches SET user_id = ? WHERE user_id IS NULL OR user_id = '' OR user_id = 'admin_root'").run(userId);
       dispatchesCount = dispRes.changes;
 
-      const contRes = db.prepare("UPDATE automated_booking_contacts SET user_id = ? WHERE user_id IS NULL").run(userId);
+      const contRes = db.prepare("UPDATE automated_booking_contacts SET user_id = ? WHERE user_id IS NULL OR user_id = '' OR user_id = 'admin_root'").run(userId);
       contactsCount = contRes.changes;
 
       // Audit log
@@ -553,9 +553,9 @@ async function claimLegacyHistory(req, res) {
  */
 async function getUnassignedSummary(req, res) {
   try {
-    const unassignedCampaigns = db.prepare("SELECT COUNT(*) as count FROM campaigns WHERE user_id IS NULL").get().count;
-    const unassignedReplies = db.prepare("SELECT COUNT(*) as count FROM customer_replies WHERE user_id IS NULL").get().count;
-    const unassignedDispatches = db.prepare("SELECT COUNT(*) as count FROM automated_booking_dispatches WHERE user_id IS NULL").get().count;
+    const unassignedCampaigns = db.prepare("SELECT COUNT(*) as count FROM campaigns WHERE user_id IS NULL OR user_id = '' OR user_id = 'admin_root'").get().count;
+    const unassignedReplies = db.prepare("SELECT COUNT(*) as count FROM customer_replies WHERE user_id IS NULL OR user_id = '' OR user_id = 'admin_root'").get().count;
+    const unassignedDispatches = db.prepare("SELECT COUNT(*) as count FROM automated_booking_dispatches WHERE user_id IS NULL OR user_id = '' OR user_id = 'admin_root'").get().count;
 
     return res.status(200).json({
       success: true,

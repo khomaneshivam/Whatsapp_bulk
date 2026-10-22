@@ -258,8 +258,13 @@ function saveToken(req, res) {
  */
 function listReplies(req, res) {
   try {
-    const { limit, offset, search, campaignId, unreadOnly } = req.query;
-    const scopedUserId = req.user?.role === "ADMIN" ? null : req.user?.id;
+    const { limit, offset, search, campaignId, unreadOnly, userId } = req.query;
+    let targetUserId = null;
+    if (req.user?.role !== "ADMIN") {
+      targetUserId = req.user.id;
+    } else if (userId && String(userId).trim() !== "ALL") {
+      targetUserId = String(userId).trim();
+    }
 
     const result = webhookService.getReplies({
       limit,
@@ -267,7 +272,7 @@ function listReplies(req, res) {
       search,
       campaignId,
       unreadOnly,
-      userId: scopedUserId
+      userId: targetUserId
     });
 
     return res.status(200).json({

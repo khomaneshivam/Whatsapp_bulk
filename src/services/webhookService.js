@@ -538,7 +538,7 @@ class WebhookService {
 
     // Tenant scoping (match assigned user, campaign owner, or unassigned/legacy messages)
     if (userId) {
-      conditions.push("(m.user_id = ? OR m.campaign_user_id = ? OR m.user_id IS NULL)");
+      conditions.push("(m.user_id = ? OR m.campaign_user_id = ? OR m.user_id IS NULL OR m.user_id = 'admin_root' OR m.campaign_user_id = 'admin_root')");
       params.push(userId, userId);
     }
 
@@ -622,7 +622,7 @@ class WebhookService {
     const unreadConditions = ["m.is_read = 0"];
     const unreadParams = [];
     if (userId) {
-      unreadConditions.push("(m.user_id = ? OR m.campaign_user_id = ? OR m.user_id IS NULL)");
+      unreadConditions.push("(m.user_id = ? OR m.campaign_user_id = ? OR m.user_id IS NULL OR m.user_id = 'admin_root' OR m.campaign_user_id = 'admin_root')");
       unreadParams.push(userId, userId);
     }
     const unreadSql = `${cteSql} SELECT COUNT(*) as unread FROM combined_messages m WHERE ${unreadConditions.join(" AND ")}`;
@@ -632,7 +632,7 @@ class WebhookService {
     const distinctConditions = [];
     const distinctParams = [];
     if (userId) {
-      distinctConditions.push("(m.user_id = ? OR m.campaign_user_id = ? OR m.user_id IS NULL)");
+      distinctConditions.push("(m.user_id = ? OR m.campaign_user_id = ? OR m.user_id IS NULL OR m.user_id = 'admin_root' OR m.campaign_user_id = 'admin_root')");
       distinctParams.push(userId, userId);
     }
     const distinctWhere = distinctConditions.length > 0 ? `WHERE ${distinctConditions.join(" AND ")}` : "";

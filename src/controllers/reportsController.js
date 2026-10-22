@@ -8,20 +8,21 @@ const timeUtil = require("../utils/timeUtil");
  */
 async function getCampaignReports(req, res) {
   try {
-    const { campaignId, status, search, limit = 50, page = 1 } = req.query;
-    const scopedUserId = getScopedUserId(req);
+    const { campaignId, status, search, limit = 50, page = 1, userId } = req.query;
 
     const offset = (parseInt(page, 10) - 1) * parseInt(limit, 10);
     const params = [];
     const conditions = [];
 
-    // User scope (match assigned user or legacy unassigned campaigns)
-    if (scopedUserId) {
-      conditions.push("(c.user_id = ? OR c.user_id IS NULL)");
-      params.push(scopedUserId);
+    if (req.user?.role !== "ADMIN") {
+      conditions.push("(c.user_id = ? OR c.user_id IS NULL OR c.user_id = 'admin_root')");
+      params.push(req.user.id);
+    } else if (userId && String(userId).trim() && String(userId).trim() !== "ALL") {
+      conditions.push("c.user_id = ?");
+      params.push(String(userId).trim());
     }
 
-    if (campaignId) {
+    if (campaignId && campaignId !== "ALL") {
       conditions.push("r.campaign_id = ?");
       params.push(campaignId);
     }
@@ -103,20 +104,29 @@ function sanitizeCell(val) {
  */
 async function exportCampaignReport(req, res) {
   try {
-    const { campaignId, format = "xlsx" } = req.query;
-    const scopedUserId = getScopedUserId(req);
+    const { campaignId, format = "xlsx", userId } = req.query;
 
     const conditions = [];
     const params = [];
 
     if (campaignId && campaignId !== "ALL") {
+      const campaign = db.prepare("SELECT * FROM campaigns WHERE id = ?").get(campaignId);
+      if (!campaign) {
+        return res.status(404).json({ success: false, message: "Campaign not found." });
+      }
+      if (req.user?.role !== "ADMIN" && campaign.user_id && campaign.user_id !== req.user?.id && campaign.user_id !== "admin_root") {
+        return res.status(403).json({ success: false, message: "Forbidden: You do not have access to this campaign." });
+      }
       conditions.push("r.campaign_id = ?");
       params.push(campaignId);
     }
 
-    if (scopedUserId) {
-      conditions.push("(c.user_id = ? OR c.user_id IS NULL)");
-      params.push(scopedUserId);
+    if (req.user?.role !== "ADMIN") {
+      conditions.push("(c.user_id = ? OR c.user_id IS NULL OR c.user_id = 'admin_root')");
+      params.push(req.user.id);
+    } else if (userId && String(userId).trim() && String(userId).trim() !== "ALL") {
+      conditions.push("c.user_id = ?");
+      params.push(String(userId).trim());
     }
 
     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
@@ -187,16 +197,18 @@ async function exportCampaignReport(req, res) {
  */
 async function getAutomationReports(req, res) {
   try {
-    const { triggerType, status, limit = 50, page = 1 } = req.query;
-    const scopedUserId = getScopedUserId(req);
+    const { triggerType, status, limit = 50, page = 1, userId } = req.query;
 
     const offset = (parseInt(page, 10) - 1) * parseInt(limit, 10);
     const conditions = [];
     const params = [];
 
-    if (scopedUserId) {
-      conditions.push("(user_id = ? OR user_id IS NULL)");
-      params.push(scopedUserId);
+    if (req.user?.role !== "ADMIN") {
+      conditions.push("(user_id = ? OR user_id IS NULL OR user_id = 'admin_root')");
+      params.push(req.user.id);
+    } else if (userId && String(userId).trim() && String(userId).trim() !== "ALL") {
+      conditions.push("user_id = ?");
+      params.push(String(userId).trim());
     }
 
     if (triggerType && triggerType !== "ALL") {
@@ -248,9 +260,17 @@ async function getAutomationReports(req, res) {
  */
 async function getOverviewAnalytics(req, res) {
   try {
-    const scopedUserId = getScopedUserId(req);
-    const userClause = scopedUserId ? "WHERE (user_id = ? OR user_id IS NULL)" : "";
-    const userParams = scopedUserId ? [scopedUserId] : [];
+    const targetUserId = req.query?.userId;
+    let userClause = "";
+    let userParams = [];
+
+    if (req.user?.role !== "ADMIN") {
+      userClause = "WHERE (user_id = ? OR user_id IS NULL OR user_id = 'admin_root')";
+      userParams = [req.user.id];
+    } else if (targetUserId && String(targetUserId).trim() && String(targetUserId).trim() !== "ALL") {
+      userClause = "WHERE user_id = ?";
+      userParams = [String(targetUserId).trim()];
+    }
 
     // Campaigns summary
     const campStats = db.prepare(`
@@ -283,6 +303,18 @@ async function getOverviewAnalytics(req, res) {
       ${userClause ? userClause + " AND status = 'SCHEDULED'" : "WHERE status = 'SCHEDULED'"}
     `).get(...userParams);
 
+    // Join params for recipients
+    const joinClause = (req.user?.role !== "ADMIN")
+      ? "WHERE (c.user_id = ? OR c.user_id IS NULL OR c.user_id = 'admin_root')"
+      : (targetUserId && String(targetUserId).trim() && String(targetUserId).trim() !== "ALL")
+        ? "WHERE c.user_id = ?"
+        : "";
+    const joinParams = (req.user?.role !== "ADMIN")
+      ? [req.user.id]
+      : (targetUserId && String(targetUserId).trim() && String(targetUserId).trim() !== "ALL")
+        ? [String(targetUserId).trim()]
+        : [];
+
     // Recipient delivery status breakdown (Delivered vs Read vs Failed)
     const recipientStats = db.prepare(`
       SELECT 
@@ -294,17 +326,28 @@ async function getOverviewAnalytics(req, res) {
         SUM(CASE WHEN r.status = 'PENDING' THEN 1 ELSE 0 END) as count_pending
       FROM campaign_recipients r
       LEFT JOIN campaigns c ON r.campaign_id = c.id
-      ${scopedUserId ? "WHERE (c.user_id = ? OR c.user_id IS NULL)" : ""}
-    `).get(...userParams);
+      ${joinClause}
+    `).get(...joinParams);
 
     // Customer direct reply counts (connected to campaigns)
+    const replyClause = (req.user?.role !== "ADMIN")
+      ? "WHERE (cr.user_id = ? OR cr.user_id IS NULL OR cr.user_id = 'admin_root')"
+      : (targetUserId && String(targetUserId).trim() && String(targetUserId).trim() !== "ALL")
+        ? "WHERE cr.user_id = ?"
+        : "";
+    const replyParams = (req.user?.role !== "ADMIN")
+      ? [req.user.id]
+      : (targetUserId && String(targetUserId).trim() && String(targetUserId).trim() !== "ALL")
+        ? [String(targetUserId).trim()]
+        : [];
+
     const replyStats = db.prepare(`
       SELECT 
         COUNT(*) as total_replies,
         COUNT(DISTINCT from_phone) as unique_repliers
       FROM customer_replies cr
-      ${scopedUserId ? "WHERE (cr.user_id = ? OR cr.user_id IS NULL)" : ""}
-    `).get(...userParams);
+      ${replyClause}
+    `).get(...replyParams);
 
     const totalSent = (campStats.total_sent || 0) + (autoStats.sent_success || 0);
     const totalFailed = (campStats.total_failed || 0) + (autoStats.sent_failed || 0);

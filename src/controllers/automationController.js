@@ -94,8 +94,13 @@ async function runNow(req, res) {
 async function getHistory(req, res) {
   try {
     const limit = parseInt(req.query.limit, 10) || 100;
-    const scopedUserId = req.user?.role === "ADMIN" ? null : req.user?.id;
-    const history = bookingAutomationService.getDispatchHistory(limit, scopedUserId);
+    let targetUserId = null;
+    if (req.user?.role !== "ADMIN") {
+      targetUserId = req.user.id;
+    } else if (req.query?.userId && req.query.userId !== "ALL") {
+      targetUserId = String(req.query.userId).trim();
+    }
+    const history = bookingAutomationService.getDispatchHistory(limit, targetUserId);
     return res.status(200).json({
       success: true,
       data: history
@@ -127,8 +132,13 @@ async function saveContacts(req, res) {
 async function getContacts(req, res) {
   try {
     const limit = parseInt(req.query.limit, 10) || 500;
-    const scopedUserId = req.user?.role === "ADMIN" ? null : req.user?.id;
-    const contacts = bookingAutomationService.getUploadedContacts(limit, scopedUserId);
+    let targetUserId = null;
+    if (req.user?.role !== "ADMIN") {
+      targetUserId = req.user.id;
+    } else if (req.query?.userId && req.query.userId !== "ALL") {
+      targetUserId = String(req.query.userId).trim();
+    }
+    const contacts = bookingAutomationService.getUploadedContacts(limit, targetUserId);
     return res.status(200).json({
       success: true,
       data: contacts,

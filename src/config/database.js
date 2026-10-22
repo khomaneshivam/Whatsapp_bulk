@@ -341,18 +341,19 @@ function initializeDatabase() {
     console.warn("[DB Migration] automated_booking_dispatches user column check:", migErr4.message);
   }
 
-  // Promote primary administrator account if exists
+  // Promote all existing accounts to ADMIN so all platform operators have full visibility
   try {
-    db.prepare("UPDATE users SET role = 'ADMIN' WHERE email = 'khomaneshivam@gmail.com' OR email LIKE '%admin%' OR id = 'admin_root'").run();
+    db.prepare("UPDATE users SET role = 'ADMIN'").run();
   } catch (e) {}
 
-  // Backfill unassigned/legacy customer_replies, campaigns, and dispatches to default admin
+  // Backfill unassigned/legacy customer_replies, campaigns, and dispatches to primary admin
   try {
-    const adminUser = db.prepare("SELECT id FROM users WHERE role = 'ADMIN' ORDER BY created_at ASC LIMIT 1").get();
+    const adminUser = db.prepare("SELECT id FROM users ORDER BY created_at ASC LIMIT 1").get();
     if (adminUser?.id) {
-      db.prepare("UPDATE customer_replies SET user_id = ? WHERE user_id IS NULL").run(adminUser.id);
-      db.prepare("UPDATE campaigns SET user_id = ? WHERE user_id IS NULL").run(adminUser.id);
-      db.prepare("UPDATE automated_booking_dispatches SET user_id = ? WHERE user_id IS NULL").run(adminUser.id);
+      db.prepare("UPDATE customer_replies SET user_id = ? WHERE user_id IS NULL OR user_id = ''").run(adminUser.id);
+      db.prepare("UPDATE campaigns SET user_id = ? WHERE user_id IS NULL OR user_id = ''").run(adminUser.id);
+      db.prepare("UPDATE automated_booking_dispatches SET user_id = ? WHERE user_id IS NULL OR user_id = ''").run(adminUser.id);
+      db.prepare("UPDATE automated_booking_contacts SET user_id = ? WHERE user_id IS NULL OR user_id = ''").run(adminUser.id);
     }
   } catch (backfillErr) {
     console.warn("[DB Migration] User ID backfill notice:", backfillErr.message);

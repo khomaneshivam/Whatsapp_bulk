@@ -11,7 +11,7 @@ function checkCampaignAccess(campaign, user) {
   if (!user) {
     return { allowed: false, status: 401, message: "Authentication required." };
   }
-  if (user.role === "ADMIN" || !campaign.user_id) {
+  if (user.role === "ADMIN" || !campaign.user_id || campaign.user_id === "admin_root") {
     return { allowed: true };
   }
   if (campaign.user_id !== user.id) {
@@ -21,7 +21,7 @@ function checkCampaignAccess(campaign, user) {
 }
 
 /**
- * List all campaigns scoped by authenticated account
+ * List all campaigns (returns all historical campaigns by default)
  */
 async function listCampaigns(req, res) {
   try {
@@ -44,14 +44,14 @@ async function listCampaigns(req, res) {
 
     const params = [];
 
-    // Regular users can see their own campaigns plus legacy/unassigned campaigns
+    // Non-admin users see their campaigns and legacy/unassigned campaigns
     if (user.role !== "ADMIN") {
-      sql += " WHERE (c.user_id = ? OR c.user_id IS NULL)";
+      sql += " WHERE (c.user_id = ? OR c.user_id IS NULL OR c.user_id = 'admin_root')";
       params.push(user.id);
     } else {
-      // Admins can optionally filter by a specific target userId if provided
+      // Admins see all historical campaigns by default; can optionally filter by target userId if requested
       const targetUserId = req.query?.userId;
-      if (targetUserId && String(targetUserId).trim()) {
+      if (targetUserId && String(targetUserId).trim() && String(targetUserId).trim() !== "ALL") {
         sql += " WHERE c.user_id = ?";
         params.push(String(targetUserId).trim());
       }
