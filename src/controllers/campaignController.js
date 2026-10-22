@@ -11,10 +11,10 @@ function checkCampaignAccess(campaign, user) {
   if (!user) {
     return { allowed: false, status: 401, message: "Authentication required." };
   }
-  if (user.role === "ADMIN") {
+  if (user.role === "ADMIN" || !campaign.user_id) {
     return { allowed: true };
   }
-  if (campaign.user_id && campaign.user_id !== user.id) {
+  if (campaign.user_id !== user.id) {
     return { allowed: false, status: 403, message: "Forbidden: You do not have access to this campaign." };
   }
   return { allowed: true };
@@ -44,9 +44,9 @@ async function listCampaigns(req, res) {
 
     const params = [];
 
-    // Regular users are strictly restricted to their own campaigns
+    // Regular users can see their own campaigns plus legacy/unassigned campaigns
     if (user.role !== "ADMIN") {
-      sql += " WHERE c.user_id = ?";
+      sql += " WHERE (c.user_id = ? OR c.user_id IS NULL)";
       params.push(user.id);
     } else {
       // Admins can optionally filter by a specific target userId if provided

@@ -15,9 +15,9 @@ async function getCampaignReports(req, res) {
     const params = [];
     const conditions = [];
 
-    // User scope
+    // User scope (match assigned user or legacy unassigned campaigns)
     if (scopedUserId) {
-      conditions.push("c.user_id = ?");
+      conditions.push("(c.user_id = ? OR c.user_id IS NULL)");
       params.push(scopedUserId);
     }
 
@@ -115,7 +115,7 @@ async function exportCampaignReport(req, res) {
     }
 
     if (scopedUserId) {
-      conditions.push("c.user_id = ?");
+      conditions.push("(c.user_id = ? OR c.user_id IS NULL)");
       params.push(scopedUserId);
     }
 
@@ -195,7 +195,7 @@ async function getAutomationReports(req, res) {
     const params = [];
 
     if (scopedUserId) {
-      conditions.push("user_id = ?");
+      conditions.push("(user_id = ? OR user_id IS NULL)");
       params.push(scopedUserId);
     }
 
@@ -249,7 +249,7 @@ async function getAutomationReports(req, res) {
 async function getOverviewAnalytics(req, res) {
   try {
     const scopedUserId = getScopedUserId(req);
-    const userClause = scopedUserId ? "WHERE user_id = ?" : "";
+    const userClause = scopedUserId ? "WHERE (user_id = ? OR user_id IS NULL)" : "";
     const userParams = scopedUserId ? [scopedUserId] : [];
 
     // Campaigns summary
@@ -294,7 +294,7 @@ async function getOverviewAnalytics(req, res) {
         SUM(CASE WHEN r.status = 'PENDING' THEN 1 ELSE 0 END) as count_pending
       FROM campaign_recipients r
       LEFT JOIN campaigns c ON r.campaign_id = c.id
-      ${userClause ? "WHERE c.user_id = ?" : ""}
+      ${scopedUserId ? "WHERE (c.user_id = ? OR c.user_id IS NULL)" : ""}
     `).get(...userParams);
 
     // Customer direct reply counts (connected to campaigns)
@@ -303,7 +303,7 @@ async function getOverviewAnalytics(req, res) {
         COUNT(*) as total_replies,
         COUNT(DISTINCT from_phone) as unique_repliers
       FROM customer_replies cr
-      ${userClause ? "WHERE cr.user_id = ?" : ""}
+      ${scopedUserId ? "WHERE (cr.user_id = ? OR cr.user_id IS NULL)" : ""}
     `).get(...userParams);
 
     const totalSent = (campStats.total_sent || 0) + (autoStats.sent_success || 0);

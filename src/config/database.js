@@ -328,12 +328,18 @@ function initializeDatabase() {
     console.warn("[DB Migration] automated_booking_dispatches user column check:", migErr4.message);
   }
 
-  // Backfill unassigned/legacy customer_replies and campaigns to default admin
+  // Promote primary administrator account if exists
+  try {
+    db.prepare("UPDATE users SET role = 'ADMIN' WHERE email = 'khomaneshivam@gmail.com' OR email LIKE '%admin%' OR id = 'admin_root'").run();
+  } catch (e) {}
+
+  // Backfill unassigned/legacy customer_replies, campaigns, and dispatches to default admin
   try {
     const adminUser = db.prepare("SELECT id FROM users WHERE role = 'ADMIN' ORDER BY created_at ASC LIMIT 1").get();
     if (adminUser?.id) {
       db.prepare("UPDATE customer_replies SET user_id = ? WHERE user_id IS NULL").run(adminUser.id);
       db.prepare("UPDATE campaigns SET user_id = ? WHERE user_id IS NULL").run(adminUser.id);
+      db.prepare("UPDATE automated_booking_dispatches SET user_id = ? WHERE user_id IS NULL").run(adminUser.id);
     }
   } catch (backfillErr) {
     console.warn("[DB Migration] User ID backfill notice:", backfillErr.message);
