@@ -101,6 +101,7 @@ describe("Security, Multi-Tenant Isolation & WhatsApp Broadcast Reliability Test
       for (const uid of testUserIds) {
         db.prepare("DELETE FROM users WHERE id = ?").run(uid);
       }
+      db.prepare("DELETE FROM users WHERE email LIKE '%@ephemeral-test.internal' OR email LIKE '%@test.com' OR name LIKE '%Attacker%' OR name LIKE '%Test Verification%'").run();
       db.prepare("DELETE FROM contact_suppressions WHERE clean_phone = ?").run(suppressedPhone);
     } catch (e) {
       console.warn("Test cleanup warning:", e.message);
@@ -198,22 +199,29 @@ describe("Security, Multi-Tenant Isolation & WhatsApp Broadcast Reliability Test
     });
 
     test("User registering with email containing 'admin' is assigned role 'USER' (Prevents privilege escalation)", async () => {
-      const email = `attacker_admin_${Date.now()}@test.com`;
-      const regRes = await fetch(`${baseUrl}/api/auth/register`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: "Attacker User",
-          email,
-          phone: "919999888877",
-          password: "SecurePassword123!"
-        })
-      });
-      assert.strictEqual(regRes.status, 201);
-      const regData = await regRes.json();
-      assert.strictEqual(regData.success, true);
-      assert.strictEqual(regData.user.role, "USER");
-      testUserIds.push(regData.user.id);
+      const email = `test_operator_admin_${Date.now()}@ephemeral-test.internal`;
+      let createdUserId = null;
+      try {
+        const regRes = await fetch(`${baseUrl}/api/auth/register`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: "Test Verification User",
+            email,
+            phone: "919999888877",
+            password: "SecurePassword123!"
+          })
+        });
+        assert.strictEqual(regRes.status, 201);
+        const regData = await regRes.json();
+        assert.strictEqual(regData.success, true);
+        assert.strictEqual(regData.user.role, "USER");
+        createdUserId = regData.user.id;
+      } finally {
+        if (createdUserId) {
+          db.prepare("DELETE FROM users WHERE id = ?").run(createdUserId);
+        }
+      }
     });
 
     test("Non-admin user cannot register WABA phone numbers (403 Forbidden)", async () => {
