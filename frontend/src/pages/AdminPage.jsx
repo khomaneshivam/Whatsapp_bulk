@@ -11,7 +11,11 @@ import {
   Activity, 
   X,
   Plus,
-  RefreshCw
+  RefreshCw,
+  Key,
+  Archive,
+  Lock,
+  AlertCircle
 } from 'lucide-react';
 import AddPhoneNumberModal from '../components/AddPhoneNumberModal';
 import { formatIndianDate } from '../utils/indianTime';
@@ -22,11 +26,22 @@ export default function AdminPage() {
   const [users, setUsers] = useState([]);
   const [phoneNumbers, setPhoneNumbers] = useState([]);
   const [overview, setOverview] = useState(null);
+  const [unassignedSummary, setUnassignedSummary] = useState(null);
+  const [claimingHistory, setClaimingHistory] = useState(false);
   const [loading, setLoading] = useState(true);
   const [successMsg, setSuccessMsg] = useState(null);
 
   // Phone registration modal state
   const [showPhoneModal, setShowPhoneModal] = useState(false);
+
+  // Admin Reset Password modal state
+  const [resetPasswordModal, setResetPasswordModal] = useState({
+    open: false,
+    user: null,
+    newPassword: '',
+    loading: false,
+    error: null
+  });
 
   useEffect(() => {
     loadAllAdminData();
@@ -37,19 +52,22 @@ export default function AdminPage() {
     try {
       const headers = { 'Authorization': `Bearer ${token}` };
       
-      const [usersRes, phonesRes, overviewRes] = await Promise.all([
+      const [usersRes, phonesRes, overviewRes, unassignedRes] = await Promise.all([
         fetch('/api/admin/users', { headers }),
         fetch('/api/admin/phone-numbers', { headers }),
-        fetch('/api/admin/overview', { headers })
+        fetch('/api/admin/overview', { headers }),
+        fetch('/api/admin/unassigned-summary', { headers }).catch(() => null)
       ]);
 
       const usersData = await usersRes.json();
       const phonesData = await phonesRes.json();
       const overviewData = await overviewRes.json();
+      const unassignedData = unassignedRes ? await unassignedRes.json() : null;
 
       if (usersData.success) setUsers(usersData.data || []);
       if (phonesData.success) setPhoneNumbers(phonesData.data || []);
       if (overviewData.success) setOverview(overviewData.data || null);
+      if (unassignedData?.success) setUnassignedSummary(unassignedData.data);
     } catch (err) {
       console.error('Failed to load admin data:', err);
     } finally {
@@ -140,6 +158,77 @@ export default function AdminPage() {
     }
   }
 
+  // Claim unassigned legacy history for a specific user
+  async function handleClaimHistory(userId, userName) {
+    if (!confirm(`Are you sure you want to assign all unassigned legacy broadcast campaigns and replies to ${userName}?`)) return;
+    setClaimingHistory(true);
+    try {
+      const res = await fetch(`/api/admin/users/${userId}/claim-history`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.message || 'Failed to claim legacy data.');
+      }
+      flashSuccess(data.message);
+      loadAllAdminData();
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setClaimingHistory(false);
+    }
+  }
+
+  // Admin password reset modal handlers
+  function handleOpenResetPassword(user) {
+    setResetPasswordModal({
+      open: true,
+      user,
+      newPassword: '',
+      loading: false,
+      error: null
+    });
+  }
+
+  function handleGenerateRandomPassword() {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$%';
+    let pwd = '';
+    for (let i = 0; i < 12; i++) {
+      pwd += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    setResetPasswordModal(prev => ({ ...prev, newPassword: pwd }));
+  }
+
+  async function handleSubmitAdminResetPassword(e) {
+    e.preventDefault();
+    const { user, newPassword } = resetPasswordModal;
+    if (!newPassword || newPassword.length < 8) {
+      setResetPasswordModal(prev => ({ ...prev, error: 'Password must be at least 8 characters long.' }));
+      return;
+    }
+
+    setResetPasswordModal(prev => ({ ...prev, loading: true, error: null }));
+    try {
+      const res = await fetch(`/api/admin/users/${user.id}/reset-password`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ newPassword })
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.message || 'Failed to reset user password.');
+      }
+      flashSuccess(data.message);
+      setResetPasswordModal({ open: false, user: null, newPassword: '', loading: false, error: null });
+    } catch (err) {
+      setResetPasswordModal(prev => ({ ...prev, error: err.message, loading: false }));
+    }
+  }
+
   // Phone Actions
   async function handleSetDefaultPhone(id) {
     try {
@@ -220,6 +309,55 @@ export default function AdminPage() {
         }}>
           <CheckCircle2 size={18} />
           <span>{successMsg}</span>
+        </div>
+      )}
+
+      {/* Unassigned Legacy History Alert Banner */}
+      {unassignedSummary?.hasUnassigned && (
+        <div style={{
+          background: 'linear-gradient(90deg, #FEF3C7, #FFFBEB)',
+          border: '1px solid #FCD34D',
+          borderRadius: '10px',
+          padding: '14px 18px',
+          marginBottom: '20px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: '14px',
+          flexWrap: 'wrap',
+          boxShadow: '0 2px 8px rgba(217, 119, 6, 0.08)'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <div style={{
+              width: '38px',
+              height: '38px',
+              borderRadius: '8px',
+              background: '#FDE68A',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: '#B45309'
+            }}>
+              <Archive size={20} />
+            </div>
+            <div>
+              <div style={{ fontSize: '0.92rem', fontWeight: 700, color: '#92400E' }}>
+                Unassigned Legacy Broadcast Campaigns Detected ({unassignedSummary.unassignedCampaigns} Campaigns, {unassignedSummary.unassignedReplies} Replies)
+              </div>
+              <div style={{ fontSize: '0.8rem', color: '#B45309', marginTop: '2px' }}>
+                These records were created prior to user accounts. You can link them all to your master administrator profile with one click.
+              </div>
+            </div>
+          </div>
+          <button
+            onClick={() => handleClaimHistory(currentUser?.id, currentUser?.name || 'Administrator')}
+            disabled={claimingHistory}
+            className="btn btn-action-green"
+            style={{ padding: '8px 16px', fontSize: '0.825rem', gap: '6px' }}
+          >
+            <Archive size={15} />
+            <span>{claimingHistory ? 'Linking Records...' : 'Claim All History to My Account'}</span>
+          </button>
         </div>
       )}
 
@@ -361,16 +499,41 @@ export default function AdminPage() {
                         </select>
                       </td>
                       <td style={{ textAlign: 'right' }}>
-                        {!isCurrent && (
+                        <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
                           <button
-                            onClick={() => handleInspect(u.id, u.name)}
+                            onClick={() => handleOpenResetPassword(u)}
+                            title="Reset User Password"
                             className="btn btn-secondary"
-                            style={{ padding: '6px 12px', fontSize: '0.78rem', gap: '6px' }}
+                            style={{ padding: '6px 10px', fontSize: '0.78rem', gap: '5px' }}
                           >
-                            <Eye size={14} color="#D97706" />
-                            <span>Inspect Account</span>
+                            <Key size={13} color="#D97706" />
+                            <span>Reset Pwd</span>
                           </button>
-                        )}
+
+                          {unassignedSummary?.hasUnassigned && (
+                            <button
+                              onClick={() => handleClaimHistory(u.id, u.name)}
+                              disabled={claimingHistory}
+                              title="Assign all unassigned legacy broadcast data to this user"
+                              className="btn btn-secondary"
+                              style={{ padding: '6px 10px', fontSize: '0.78rem', gap: '5px' }}
+                            >
+                              <Archive size={13} color="#059669" />
+                              <span>Assign Data</span>
+                            </button>
+                          )}
+
+                          {!isCurrent && (
+                            <button
+                              onClick={() => handleInspect(u.id, u.name)}
+                              className="btn btn-secondary"
+                              style={{ padding: '6px 10px', fontSize: '0.78rem', gap: '5px' }}
+                            >
+                              <Eye size={13} color="#2563EB" />
+                              <span>Inspect</span>
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   );
@@ -576,6 +739,162 @@ export default function AdminPage() {
         onClose={() => setShowPhoneModal(false)}
         onPhoneAdded={loadAllAdminData}
       />
+
+      {/* ADMIN RESET USER PASSWORD MODAL */}
+      {resetPasswordModal.open && (
+        <div style={{
+          position: 'fixed',
+          inset: 0,
+          background: 'rgba(15, 23, 42, 0.65)',
+          backdropFilter: 'blur(6px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '20px',
+          zIndex: 9999,
+          animation: 'fadeIn 0.2s ease-out'
+        }}>
+          <div className="saas-card" style={{
+            width: '100%',
+            maxWidth: '440px',
+            padding: '28px',
+            boxShadow: 'var(--shadow-xl)',
+            border: '1px solid var(--border-color)',
+            position: 'relative'
+          }}>
+            <button
+              onClick={() => setResetPasswordModal({ open: false, user: null, newPassword: '', loading: false, error: null })}
+              style={{
+                position: 'absolute',
+                top: '16px',
+                right: '16px',
+                background: 'transparent',
+                border: 'none',
+                color: '#94A3B8',
+                cursor: 'pointer',
+                padding: '4px'
+              }}
+            >
+              <X size={20} />
+            </button>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '14px' }}>
+              <div style={{
+                width: '38px',
+                height: '38px',
+                borderRadius: '10px',
+                background: '#FEF3C7',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                color: '#D97706'
+              }}>
+                <Key size={20} />
+              </div>
+              <div>
+                <h3 style={{ fontSize: '1.15rem', fontWeight: 800, color: '#0F172A', margin: 0 }}>
+                  Reset User Password
+                </h3>
+                <span style={{ fontSize: '0.78rem', color: '#64748B' }}>
+                  Set a new security password for {resetPasswordModal.user?.name}
+                </span>
+              </div>
+            </div>
+
+            {resetPasswordModal.error && (
+              <div style={{
+                background: '#FEE2E2',
+                border: '1px solid #FECACA',
+                borderRadius: '8px',
+                padding: '10px 14px',
+                color: '#DC2626',
+                fontSize: '0.8rem',
+                fontWeight: 500,
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                marginBottom: '16px'
+              }}>
+                <AlertCircle size={16} />
+                <span>{resetPasswordModal.error}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleSubmitAdminResetPassword} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: '#334155', marginBottom: '4px' }}>
+                  Target User Account
+                </label>
+                <div style={{
+                  padding: '9px 12px',
+                  background: 'var(--bg-secondary)',
+                  borderRadius: '6px',
+                  border: '1px solid var(--border-color)',
+                  fontSize: '0.85rem',
+                  color: '#1E293B',
+                  fontWeight: 600
+                }}>
+                  {resetPasswordModal.user?.name} ({resetPasswordModal.user?.email})
+                </div>
+              </div>
+
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                  <label style={{ fontSize: '0.8rem', fontWeight: 600, color: '#334155' }}>
+                    New Password (min. 8 characters)
+                  </label>
+                  <button
+                    type="button"
+                    onClick={handleGenerateRandomPassword}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      color: 'var(--brand-wa)',
+                      fontSize: '0.75rem',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      padding: 0
+                    }}
+                  >
+                    Generate Random
+                  </button>
+                </div>
+                <div style={{ position: 'relative' }}>
+                  <input
+                    type="text"
+                    required
+                    className="saas-input"
+                    placeholder="Enter new password"
+                    value={resetPasswordModal.newPassword}
+                    onChange={e => setResetPasswordModal(prev => ({ ...prev, newPassword: e.target.value }))}
+                    style={{ paddingLeft: '38px', fontFamily: 'monospace', fontWeight: 600 }}
+                  />
+                  <Lock size={16} color="#94A3B8" style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }} />
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', gap: '10px', marginTop: '6px' }}>
+                <button
+                  type="button"
+                  onClick={() => setResetPasswordModal({ open: false, user: null, newPassword: '', loading: false, error: null })}
+                  className="btn btn-secondary"
+                  style={{ flex: 1, padding: '10px' }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={resetPasswordModal.loading}
+                  className="btn btn-action-green"
+                  style={{ flex: 1.5, padding: '10px' }}
+                >
+                  {resetPasswordModal.loading ? 'Saving...' : 'Set New Password'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -21,6 +21,10 @@ const metaWhatsAppService = require("../services/metaWhatsAppService");
 // =========================================================================
 router.post("/auth/register", authLimiter, authController.register);
 router.post("/auth/login", authLimiter, authController.login);
+router.post("/auth/forgot-password", authLimiter, authController.forgotPassword);
+router.post("/auth/verify-reset-token", authLimiter, authController.verifyResetToken);
+router.post("/auth/reset-password", authLimiter, authController.resetPassword);
+router.post("/auth/change-password", authenticateToken, authController.changePassword);
 router.get("/auth/me", authenticateToken, authController.getMe);
 router.post("/auth/profile", authenticateToken, authController.updateProfile);
 
@@ -31,7 +35,10 @@ router.get("/admin/users", authenticateToken, requireAdmin, adminController.list
 router.get("/admin/users/:userId", authenticateToken, requireAdmin, adminController.getUserDetails);
 router.post("/admin/users/:userId/status", authenticateToken, requireAdmin, adminController.updateUserStatus);
 router.post("/admin/users/:userId/role", authenticateToken, requireAdmin, adminController.updateUserRole);
+router.post("/admin/users/:userId/reset-password", authenticateToken, requireAdmin, adminController.resetUserPassword);
 router.post("/admin/users/:userId/assign-phone", authenticateToken, requireAdmin, adminController.assignPhoneNumber);
+router.post("/admin/users/:userId/claim-history", authenticateToken, requireAdmin, adminController.claimLegacyHistory);
+router.get("/admin/unassigned-summary", authenticateToken, requireAdmin, adminController.getUnassignedSummary);
 router.post("/admin/impersonate/:userId", authenticateToken, requireAdmin, adminController.impersonateUser);
 router.get("/admin/overview", authenticateToken, requireAdmin, adminController.getSystemOverview);
 

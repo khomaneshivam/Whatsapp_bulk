@@ -1,4 +1,5 @@
 const crypto = require("crypto");
+const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const config = require("../config/env");
 const { db, getSetting, setSetting } = require("../config/database");
@@ -451,6 +452,126 @@ async function getSystemOverview(req, res) {
   }
 }
 
+/**
+ * Directly reset a user's password (Admin Only)
+ */
+async function resetUserPassword(req, res) {
+  try {
+    const { userId } = req.params;
+    const { newPassword } = req.body || {};
+
+    if (!newPassword || String(newPassword).length < 8) {
+      return res.status(400).json({ success: false, message: "New password must be at least 8 characters long." });
+    }
+
+    const user = db.prepare("SELECT id, name, email FROM users WHERE id = ?").get(userId);
+    if (!user) {
+      return res.status(404).json({ success: false, message: "User not found." });
+    }
+
+    const newHash = await bcrypt.hash(newPassword, 10);
+    db.prepare("UPDATE users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(newHash, userId);
+
+    // Audit log
+    try {
+      db.prepare(`
+        INSERT INTO audit_logs (user_id, action, target_id, details, ip_address)
+        VALUES (?, 'ADMIN_PASSWORD_RESET', ?, ?, ?)
+      `).run(req.user.id, userId, `Admin reset password for ${user.email}`, req.ip || null);
+    } catch (e) {}
+
+    return res.status(200).json({
+      success: true,
+      message: `Password for ${user.name} (${user.email}) has been reset successfully.`
+    });
+  } catch (error) {
+    console.error("Admin resetUserPassword error:", error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+}
+
+/**
+ * Assign all unassigned legacy history (campaigns, replies, dispatches) to a user (Admin Only)
+ */
+async function claimLegacyHistory(req, res) {
+  try {
+    const { userId } = req.params;
+    const targetUser = db.prepare("SELECT id, name, email FROM users WHERE id = ?").get(userId);
+    if (!targetUser) {
+      return res.status(404).json({ success: false, message: "User not found." });
+    }
+
+    let campaignsCount = 0;
+    let repliesCount = 0;
+    let dispatchesCount = 0;
+    let contactsCount = 0;
+
+    db.exec("BEGIN IMMEDIATE TRANSACTION;");
+    try {
+      const campRes = db.prepare("UPDATE campaigns SET user_id = ? WHERE user_id IS NULL").run(userId);
+      campaignsCount = campRes.changes;
+
+      const replyRes = db.prepare("UPDATE customer_replies SET user_id = ? WHERE user_id IS NULL").run(userId);
+      repliesCount = replyRes.changes;
+
+      const dispRes = db.prepare("UPDATE automated_booking_dispatches SET user_id = ? WHERE user_id IS NULL").run(userId);
+      dispatchesCount = dispRes.changes;
+
+      const contRes = db.prepare("UPDATE automated_booking_contacts SET user_id = ? WHERE user_id IS NULL").run(userId);
+      contactsCount = contRes.changes;
+
+      // Audit log
+      db.prepare(`
+        INSERT INTO audit_logs (user_id, action, target_id, details, ip_address)
+        VALUES (?, 'CLAIM_LEGACY_HISTORY', ?, ?, ?)
+      `).run(req.user.id, userId, `Assigned ${campaignsCount} campaigns, ${repliesCount} replies, ${dispatchesCount} dispatches to ${targetUser.email}`, req.ip || null);
+
+      db.exec("COMMIT;");
+    } catch (txErr) {
+      db.exec("ROLLBACK;");
+      throw txErr;
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: `Successfully linked ${campaignsCount} campaigns, ${repliesCount} customer replies, and ${dispatchesCount} booking dispatches to ${targetUser.name}!`,
+      data: {
+        claimedCampaigns: campaignsCount,
+        claimedReplies: repliesCount,
+        claimedDispatches: dispatchesCount,
+        claimedContacts: contactsCount
+      }
+    });
+  } catch (error) {
+    console.error("Admin claimLegacyHistory error:", error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+}
+
+/**
+ * Returns summary of unassigned legacy records in the platform (Admin Only)
+ */
+async function getUnassignedSummary(req, res) {
+  try {
+    const unassignedCampaigns = db.prepare("SELECT COUNT(*) as count FROM campaigns WHERE user_id IS NULL").get().count;
+    const unassignedReplies = db.prepare("SELECT COUNT(*) as count FROM customer_replies WHERE user_id IS NULL").get().count;
+    const unassignedDispatches = db.prepare("SELECT COUNT(*) as count FROM automated_booking_dispatches WHERE user_id IS NULL").get().count;
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        unassignedCampaigns,
+        unassignedReplies,
+        unassignedDispatches,
+        hasUnassigned: (unassignedCampaigns + unassignedReplies + unassignedDispatches) > 0
+      }
+    });
+  } catch (error) {
+    console.error("Admin getUnassignedSummary error:", error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+}
+
 module.exports = {
   listUsers,
   getUserDetails,
@@ -462,5 +583,8 @@ module.exports = {
   registerPhoneNumber,
   deletePhoneNumber,
   setDefaultPhoneNumber,
-  getSystemOverview
+  getSystemOverview,
+  resetUserPassword,
+  claimLegacyHistory,
+  getUnassignedSummary
 };

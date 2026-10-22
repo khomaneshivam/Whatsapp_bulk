@@ -193,6 +193,17 @@ function initializeDatabase() {
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
+    CREATE TABLE IF NOT EXISTS password_resets (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id TEXT NOT NULL,
+      token_hash TEXT NOT NULL,
+      expires_at DATETIME NOT NULL,
+      used INTEGER DEFAULT 0,
+      ip_address TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
     CREATE INDEX IF NOT EXISTS idx_recipients_campaign ON campaign_recipients(campaign_id);
     CREATE INDEX IF NOT EXISTS idx_recipients_status ON campaign_recipients(campaign_id, status);
     CREATE INDEX IF NOT EXISTS idx_templates_name ON templates(name);
@@ -212,6 +223,8 @@ function initializeDatabase() {
     CREATE INDEX IF NOT EXISTS idx_waba_phone_id ON waba_phone_numbers(phone_number_id);
     CREATE INDEX IF NOT EXISTS idx_suppressions_phone ON contact_suppressions(clean_phone);
     CREATE INDEX IF NOT EXISTS idx_audit_user ON audit_logs(user_id);
+    CREATE INDEX IF NOT EXISTS idx_resets_token ON password_resets(token_hash, used, expires_at);
+    CREATE INDEX IF NOT EXISTS idx_resets_user ON password_resets(user_id);
   `);
 
   // Migrate existing databases: add scheduled_at, unknown_count, estimated_cost to campaigns

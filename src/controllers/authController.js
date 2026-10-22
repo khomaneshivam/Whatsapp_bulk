@@ -256,9 +256,239 @@ async function updateProfile(req, res) {
   }
 }
 
+/**
+ * Request password recovery code (Sent via WhatsApp or logged for emergency access)
+ */
+async function forgotPassword(req, res) {
+  try {
+    const { email } = req.body || {};
+    if (!email || !String(email).trim()) {
+      return res.status(400).json({ success: false, message: "Email address is required." });
+    }
+
+    const cleanEmail = String(email).trim().toLowerCase();
+    const user = db.prepare("SELECT id, name, email, phone, role FROM users WHERE email = ? COLLATE NOCASE").get(cleanEmail);
+
+    if (!user) {
+      // Return generic message to prevent email enumeration
+      return res.status(200).json({
+        success: true,
+        message: "If an account with this email exists, a password recovery code has been generated."
+      });
+    }
+
+    // Generate 6-digit numeric recovery code
+    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    const tokenHash = crypto.createHash("sha256").update(code).digest("hex");
+    const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString().replace("T", " ").substring(0, 19);
+
+    // Invalidate previous unused codes for this user
+    db.prepare("UPDATE password_resets SET used = 1 WHERE user_id = ? AND used = 0").run(user.id);
+
+    // Record new reset code
+    db.prepare(`
+      INSERT INTO password_resets (user_id, token_hash, expires_at, ip_address)
+      VALUES (?, ?, ?, ?)
+    `).run(user.id, tokenHash, expiresAt, req.ip || null);
+
+    let whatsappSent = false;
+    let recipientPhone = null;
+
+    if (user.phone) {
+      try {
+        const metaWhatsAppService = require("../services/metaWhatsAppService");
+        const targetPhone = metaWhatsAppService.cleanPhone(user.phone, "91");
+        if (targetPhone) {
+          recipientPhone = targetPhone;
+          const sendRes = await metaWhatsAppService.sendTextMessage({
+            to: targetPhone,
+            body: `Your KonkanTrip engine password reset code is: *${code}*\n\nThis verification code expires in 30 minutes. If you did not request this, you can safely ignore this message.`
+          });
+          if (sendRes?.success || sendRes?.messageId) {
+            whatsappSent = true;
+          }
+        }
+      } catch (waErr) {
+        console.warn("[Auth] WhatsApp password reset dispatch note:", waErr.message);
+      }
+    }
+
+    console.log(`[Auth Recovery] Password reset requested for ${user.email}. Code: ${code} (Expires: ${expiresAt})`);
+
+    const isDev = config.NODE_ENV !== "production";
+    const maskedPhone = recipientPhone ? recipientPhone.replace(/(\d{2})(\d+)(\d{4})/, "$1******$3") : null;
+
+    return res.status(200).json({
+      success: true,
+      message: whatsappSent
+        ? `A 6-digit recovery code was dispatched to your WhatsApp number (${maskedPhone}).`
+        : `A password reset code was generated. Please enter the 6-digit code${isDev ? ` (Dev Code: ${code})` : " provided by your administrator"}.`,
+      data: {
+        email: cleanEmail,
+        whatsappSent,
+        maskedPhone,
+        // Include code in non-production environments or when WhatsApp delivery wasn't configured
+        devRecoveryCode: isDev ? code : undefined
+      }
+    });
+  } catch (error) {
+    console.error("Forgot password error:", error);
+    return res.status(500).json({ success: false, message: error.message || "Failed to process recovery request." });
+  }
+}
+
+/**
+ * Verifies validity of a reset code
+ */
+async function verifyResetToken(req, res) {
+  try {
+    const { email, code } = req.body || {};
+    if (!email || !code) {
+      return res.status(400).json({ success: false, message: "Email and recovery code are required." });
+    }
+
+    const cleanEmail = String(email).trim().toLowerCase();
+    const user = db.prepare("SELECT id FROM users WHERE email = ? COLLATE NOCASE").get(cleanEmail);
+    if (!user) {
+      return res.status(400).json({ success: false, message: "Invalid email or recovery code." });
+    }
+
+    const tokenHash = crypto.createHash("sha256").update(String(code).trim()).digest("hex");
+    const resetRecord = db.prepare(`
+      SELECT id, expires_at, used
+      FROM password_resets
+      WHERE user_id = ? AND token_hash = ? AND used = 0 AND expires_at > CURRENT_TIMESTAMP
+      ORDER BY id DESC LIMIT 1
+    `).get(user.id, tokenHash);
+
+    if (!resetRecord) {
+      return res.status(400).json({ success: false, message: "Recovery code is invalid or has expired." });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Recovery code verified successfully."
+    });
+  } catch (error) {
+    console.error("Verify reset token error:", error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+}
+
+/**
+ * Resets password using verified reset code
+ */
+async function resetPassword(req, res) {
+  try {
+    const { email, code, newPassword } = req.body || {};
+    if (!email || !code || !newPassword) {
+      return res.status(400).json({ success: false, message: "Email, recovery code, and new password are required." });
+    }
+
+    if (String(newPassword).length < 8) {
+      return res.status(400).json({ success: false, message: "New password must be at least 8 characters long." });
+    }
+
+    const cleanEmail = String(email).trim().toLowerCase();
+    const user = db.prepare("SELECT id, name, email, role FROM users WHERE email = ? COLLATE NOCASE").get(cleanEmail);
+    if (!user) {
+      return res.status(400).json({ success: false, message: "Invalid email or recovery code." });
+    }
+
+    const tokenHash = crypto.createHash("sha256").update(String(code).trim()).digest("hex");
+    const resetRecord = db.prepare(`
+      SELECT id, expires_at, used
+      FROM password_resets
+      WHERE user_id = ? AND token_hash = ? AND used = 0 AND expires_at > CURRENT_TIMESTAMP
+      ORDER BY id DESC LIMIT 1
+    `).get(user.id, tokenHash);
+
+    if (!resetRecord) {
+      return res.status(400).json({ success: false, message: "Recovery code is invalid or has expired. Please request a new one." });
+    }
+
+    // Hash new password
+    const newHash = await bcrypt.hash(newPassword, 10);
+
+    db.exec("BEGIN IMMEDIATE TRANSACTION;");
+    try {
+      // Update password
+      db.prepare("UPDATE users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(newHash, user.id);
+
+      // Invalidate recovery code
+      db.prepare("UPDATE password_resets SET used = 1 WHERE id = ?").run(resetRecord.id);
+
+      // If user is ADMIN or primary owner, backfill unassigned history
+      if (user.role === "ADMIN" || user.email === "khomaneshivam@gmail.com") {
+        db.prepare("UPDATE customer_replies SET user_id = ? WHERE user_id IS NULL").run(user.id);
+        db.prepare("UPDATE campaigns SET user_id = ? WHERE user_id IS NULL").run(user.id);
+        db.prepare("UPDATE automated_booking_dispatches SET user_id = ? WHERE user_id IS NULL").run(user.id);
+      }
+
+      db.exec("COMMIT;");
+    } catch (txErr) {
+      db.exec("ROLLBACK;");
+      throw txErr;
+    }
+
+    console.log(`[Auth Recovery] Password successfully reset for user ${user.email} (${user.id})`);
+
+    return res.status(200).json({
+      success: true,
+      message: "Password reset successfully. You can now sign in with your new credentials."
+    });
+  } catch (error) {
+    console.error("Reset password error:", error);
+    return res.status(500).json({ success: false, message: error.message || "Failed to reset password." });
+  }
+}
+
+/**
+ * Change password for authenticated user
+ */
+async function changePassword(req, res) {
+  try {
+    const { currentPassword, newPassword } = req.body || {};
+    const userId = req.user.id;
+
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ success: false, message: "Current password and new password are required." });
+    }
+
+    if (String(newPassword).length < 8) {
+      return res.status(400).json({ success: false, message: "New password must be at least 8 characters long." });
+    }
+
+    const userRow = db.prepare("SELECT password_hash FROM users WHERE id = ?").get(userId);
+    if (!userRow) {
+      return res.status(404).json({ success: false, message: "User not found." });
+    }
+
+    const match = await bcrypt.compare(String(currentPassword), userRow.password_hash);
+    if (!match) {
+      return res.status(400).json({ success: false, message: "Current password is incorrect." });
+    }
+
+    const newHash = await bcrypt.hash(newPassword, 10);
+    db.prepare("UPDATE users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(newHash, userId);
+
+    return res.status(200).json({
+      success: true,
+      message: "Password updated successfully."
+    });
+  } catch (error) {
+    console.error("Change password error:", error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+}
+
 module.exports = {
   register,
   login,
   getMe,
-  updateProfile
+  updateProfile,
+  forgotPassword,
+  verifyResetToken,
+  resetPassword,
+  changePassword
 };
