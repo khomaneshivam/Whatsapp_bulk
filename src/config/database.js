@@ -328,6 +328,17 @@ function initializeDatabase() {
     console.warn("[DB Migration] automated_booking_dispatches user column check:", migErr4.message);
   }
 
+  // Backfill unassigned/legacy customer_replies and campaigns to default admin
+  try {
+    const adminUser = db.prepare("SELECT id FROM users WHERE role = 'ADMIN' ORDER BY created_at ASC LIMIT 1").get();
+    if (adminUser?.id) {
+      db.prepare("UPDATE customer_replies SET user_id = ? WHERE user_id IS NULL").run(adminUser.id);
+      db.prepare("UPDATE campaigns SET user_id = ? WHERE user_id IS NULL").run(adminUser.id);
+    }
+  } catch (backfillErr) {
+    console.warn("[DB Migration] User ID backfill notice:", backfillErr.message);
+  }
+
   // Seed default templates if empty
   try {
     const templateCount = db.prepare("SELECT COUNT(*) as count FROM templates").get().count;

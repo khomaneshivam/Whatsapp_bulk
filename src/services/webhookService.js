@@ -527,96 +527,154 @@ class WebhookService {
   }
 
   /**
-   * Retrieves customer replies with filtering, searching, and pagination
+   * Retrieves customer replies and outbound broadcast messages with filtering, searching, and pagination
    */
   getReplies({ limit = 50, offset = 0, search = "", campaignId = "", unreadOnly = false, userId = null }) {
-    const parsedLimit = Math.min(Math.max(parseInt(limit, 10) || 50, 1), 1000);
+    const parsedLimit = Math.min(Math.max(parseInt(limit, 10) || 50, 1), 2000);
     const parsedOffset = Math.max(parseInt(offset, 10) || 0, 0);
 
     const conditions = [];
     const params = [];
 
-    // Tenant scoping
+    // Tenant scoping (match assigned user, campaign owner, or unassigned/legacy messages)
     if (userId) {
-      conditions.push("(r.user_id = ? OR c.user_id = ?)");
+      conditions.push("(m.user_id = ? OR m.campaign_user_id = ? OR m.user_id IS NULL)");
       params.push(userId, userId);
     }
 
     if (search && String(search).trim()) {
       const q = `%${String(search).trim()}%`;
-      conditions.push("(r.from_phone LIKE ? OR r.customer_name LIKE ? OR r.message_body LIKE ?)");
+      conditions.push("(m.from_phone LIKE ? OR m.customer_name LIKE ? OR m.message_body LIKE ?)");
       params.push(q, q, q);
     }
 
     if (campaignId && String(campaignId).trim()) {
-      conditions.push("r.campaign_id = ?");
+      conditions.push("m.campaign_id = ?");
       params.push(String(campaignId).trim());
     }
 
     if (unreadOnly === true || unreadOnly === "true" || unreadOnly === 1 || unreadOnly === "1") {
-      conditions.push("r.is_read = 0");
+      conditions.push("m.is_read = 0");
     }
 
     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
 
+    const cteSql = `
+      WITH combined_messages AS (
+        SELECT 
+          r.id as id,
+          r.wa_message_id as wa_message_id,
+          r.from_phone as from_phone,
+          r.customer_name as customer_name,
+          r.message_type as message_type,
+          r.message_body as message_body,
+          r.raw_payload as raw_payload,
+          r.context_message_id as context_message_id,
+          r.campaign_id as campaign_id,
+          r.is_read as is_read,
+          r.received_at as received_at,
+          r.reply_text as reply_text,
+          r.reply_sent_at as reply_sent_at,
+          r.reply_status as reply_status,
+          r.media_url as media_url,
+          r.media_type as media_type,
+          r.media_caption as media_caption,
+          r.user_id as user_id,
+          c.name as campaign_name,
+          c.user_id as campaign_user_id
+        FROM customer_replies r
+        LEFT JOIN campaigns c ON r.campaign_id = c.id
+
+        UNION ALL
+
+        SELECT 
+          ('cr_' || cr.id) as id,
+          cr.meta_message_id as wa_message_id,
+          cr.clean_phone as from_phone,
+          cr.contact_name as customer_name,
+          'outbound' as message_type,
+          cr.rendered_message as message_body,
+          cr.raw_data as raw_payload,
+          NULL as context_message_id,
+          cr.campaign_id as campaign_id,
+          1 as is_read,
+          cr.sent_at as received_at,
+          NULL as reply_text,
+          NULL as reply_sent_at,
+          cr.status as reply_status,
+          NULL as media_url,
+          NULL as media_type,
+          NULL as media_caption,
+          c.user_id as user_id,
+          c.name as campaign_name,
+          c.user_id as campaign_user_id
+        FROM campaign_recipients cr
+        LEFT JOIN campaigns c ON cr.campaign_id = c.id
+        WHERE cr.status IN ('SENT', 'DELIVERED', 'READ') AND cr.sent_at IS NOT NULL
+      )
+    `;
+
     // Total count
-    const countSql = `SELECT COUNT(*) as total FROM customer_replies r LEFT JOIN campaigns c ON r.campaign_id = c.id ${whereClause}`;
+    const countSql = `${cteSql} SELECT COUNT(*) as total FROM combined_messages m ${whereClause}`;
     const totalCount = db.prepare(countSql).get(...params).total;
 
     // Unread count
-    const unreadConditions = ["r.is_read = 0"];
+    const unreadConditions = ["m.is_read = 0"];
     const unreadParams = [];
     if (userId) {
-      unreadConditions.push("(r.user_id = ? OR c.user_id = ?)");
+      unreadConditions.push("(m.user_id = ? OR m.campaign_user_id = ? OR m.user_id IS NULL)");
       unreadParams.push(userId, userId);
     }
-    const unreadSql = `SELECT COUNT(*) as unread FROM customer_replies r LEFT JOIN campaigns c ON r.campaign_id = c.id WHERE ${unreadConditions.join(" AND ")}`;
+    const unreadSql = `${cteSql} SELECT COUNT(*) as unread FROM combined_messages m WHERE ${unreadConditions.join(" AND ")}`;
     const unreadCount = db.prepare(unreadSql).get(...unreadParams).unread;
 
     // Distinct customer contacts count
     const distinctConditions = [];
     const distinctParams = [];
     if (userId) {
-      distinctConditions.push("(r.user_id = ? OR c.user_id = ?)");
+      distinctConditions.push("(m.user_id = ? OR m.campaign_user_id = ? OR m.user_id IS NULL)");
       distinctParams.push(userId, userId);
     }
     const distinctWhere = distinctConditions.length > 0 ? `WHERE ${distinctConditions.join(" AND ")}` : "";
-    const distinctSql = `SELECT COUNT(DISTINCT r.from_phone) as count FROM customer_replies r LEFT JOIN campaigns c ON r.campaign_id = c.id ${distinctWhere}`;
+    const distinctSql = `${cteSql} SELECT COUNT(DISTINCT m.from_phone) as count FROM combined_messages m ${distinctWhere}`;
     const distinctContacts = db.prepare(distinctSql).get(...distinctParams).count;
 
     // Query replies
     const dataSql = `
-      SELECT 
-        r.id,
-        r.wa_message_id,
-        r.from_phone,
-        r.customer_name,
-        r.message_type,
-        r.message_body,
-        r.raw_payload,
-        r.context_message_id,
-        r.campaign_id,
-        r.is_read,
-        r.received_at,
-        r.reply_text,
-        r.reply_sent_at,
-        r.reply_status,
-        r.media_url,
-        r.media_type,
-        r.media_caption,
-        c.name as campaign_name
-      FROM customer_replies r
-      LEFT JOIN campaigns c ON r.campaign_id = c.id
+      ${cteSql}
+      SELECT * FROM combined_messages m
       ${whereClause}
-      ORDER BY r.received_at DESC, r.id DESC
+      ORDER BY m.received_at DESC, m.id DESC
       LIMIT ? OFFSET ?
     `;
 
     const dataParams = [...params, parsedLimit, parsedOffset];
     const rawReplies = db.prepare(dataSql).all(...dataParams);
 
-    // Self-healing: if any media message was stored without media_url, extract media ID from raw_payload
+    // Format outbound broadcast messages and heal missing media URLs
     const replies = rawReplies.map(r => {
+      // Clean display text for outbound broadcast recipients
+      if (r.message_type === "outbound" && (!r.message_body || !r.message_body.trim() || r.message_body.startsWith("[") || r.message_body.startsWith("{"))) {
+        const trimmed = (r.message_body || "").trim();
+        let formatted = null;
+        if (trimmed.startsWith("[") || trimmed.startsWith("{")) {
+          try {
+            const parsed = JSON.parse(trimmed);
+            if (Array.isArray(parsed)) {
+              const bodyComp = parsed.find(comp => comp.type === "body");
+              if (bodyComp && Array.isArray(bodyComp.parameters)) {
+                const texts = bodyComp.parameters.map(p => p.text).filter(Boolean);
+                if (texts.length > 0) {
+                  formatted = `📢 ${r.campaign_name || "Broadcast"}: ${texts.join(" • ")}`;
+                }
+              }
+            }
+          } catch (e) {}
+        }
+        r.message_body = formatted || (r.campaign_name ? `📢 Broadcast: ${r.campaign_name}` : "WhatsApp Broadcast Message");
+      }
+
+      // Self-healing: if any media message was stored without media_url, extract media ID from raw_payload
       if (!r.media_url && r.raw_payload) {
         try {
           const raw = JSON.parse(r.raw_payload);
@@ -625,8 +683,10 @@ class WebhookService {
             r.media_url = `/api/media/inbound/${mediaObj.id}`;
             r.media_type = r.message_type || (raw.image ? "image" : (raw.video ? "video" : (raw.document ? "document" : "image")));
             r.media_caption = r.media_caption || mediaObj.caption || mediaObj.filename || null;
-            db.prepare("UPDATE customer_replies SET media_url = ?, media_type = ? WHERE id = ?")
-              .run(r.media_url, r.media_type, r.id);
+            if (typeof r.id === "number") {
+              db.prepare("UPDATE customer_replies SET media_url = ?, media_type = ? WHERE id = ?")
+                .run(r.media_url, r.media_type, r.id);
+            }
           }
         } catch (e) {}
       }
