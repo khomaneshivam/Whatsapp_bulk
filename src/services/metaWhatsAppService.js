@@ -454,7 +454,7 @@ async function fetchWabaTemplates({ category = null, status = null, limit = 100,
 /**
  * Send a pre-approved template message via Meta Cloud API
  */
-async function sendTemplateMessage({ to, templateName, languageCode, components = [], customCredentials = null }) {
+async function sendTemplateMessage({ to, templateName, languageCode, components = [], customCredentials = null, flowActionData = null, campaignId = null, userId = "system" }) {
   const creds = customCredentials || getActiveCredentials();
   const defaultCountry = getSetting("DEFAULT_COUNTRY_CODE") || "91";
   const cleanTo = cleanPhone(to, defaultCountry);
@@ -466,7 +466,7 @@ async function sendTemplateMessage({ to, templateName, languageCode, components 
   let rawName = String(templateName || "").trim();
   let resolvedName = rawName;
   let resolvedLang = languageCode;
-  let resolvedComponents = Array.isArray(components) ? components : [];
+  let resolvedComponents = Array.isArray(components) ? [...components] : [];
 
   // 1. Resolve numeric Template ID or specific template names
   if (rawName === "1059862786867912" || rawName === "kt_invitation_") {
@@ -489,6 +489,60 @@ async function sendTemplateMessage({ to, templateName, languageCode, components 
   // 2. Default language resolution
   if (!resolvedLang) {
     resolvedLang = (resolvedName === "kt_invitation_" || resolvedName === "kt_restaurant_invitation") ? "en" : "en_US";
+  }
+
+  // 3. Inspect if the template has a FLOW button that requires flow_token
+  let flowTokenGenerated = null;
+  try {
+    const details = await getTemplateDetails(resolvedName, creds);
+    if (details) {
+      let buttons = Array.isArray(details.buttons) ? details.buttons : [];
+      if (buttons.length === 0 && Array.isArray(details.components)) {
+        const btnComp = details.components.find(c => String(c.type || "").toUpperCase() === "BUTTONS");
+        if (btnComp && Array.isArray(btnComp.buttons)) {
+          buttons = btnComp.buttons;
+        }
+      }
+
+      buttons.forEach((btn, idx) => {
+        if (String(btn.type || "").toUpperCase() === "FLOW") {
+          const hasExisting = resolvedComponents.some(c => c.type === "button" && c.sub_type === "flow" && String(c.index) === String(idx));
+          if (!hasExisting) {
+            try {
+              const flowService = require("./flowService");
+              flowTokenGenerated = flowService.createFlowToken({
+                flowId: btn.flow_id || details.id,
+                metaFlowId: btn.flow_id || null,
+                recipientPhone: cleanTo,
+                campaignId: campaignId || null,
+                userId: userId || "system"
+              });
+
+              const actionObj = { flow_token: flowTokenGenerated };
+              if (flowActionData && typeof flowActionData === "object" && Object.keys(flowActionData).length > 0) {
+                actionObj.flow_action_data = flowActionData;
+              }
+
+              resolvedComponents.push({
+                type: "button",
+                sub_type: "flow",
+                index: String(idx),
+                parameters: [
+                  {
+                    type: "action",
+                    action: actionObj
+                  }
+                ]
+              });
+            } catch (tokenErr) {
+              console.warn("[sendTemplateMessage] Auto flow token generation note:", tokenErr.message);
+            }
+          }
+        }
+      });
+    }
+  } catch (lookupErr) {
+    // Non-blocking template button inspection fallback
   }
 
   const url = `${META_BASE_URL}/${creds.phoneNumberId}/messages`;
@@ -538,11 +592,26 @@ async function sendTemplateMessage({ to, templateName, languageCode, components 
     throw parseMetaError(data, res.status);
   }
 
+  const messageId = data.messages?.[0]?.id;
+  if (messageId) {
+    // Link meta_message_id to flow_token record if a flow was sent
+    const flowBtnComp = resolvedComponents.find(c => c.type === "button" && c.sub_type === "flow");
+    const activeToken = flowTokenGenerated || flowBtnComp?.parameters?.[0]?.action?.flow_token;
+    if (activeToken) {
+      try {
+        db.prepare("UPDATE flow_tokens SET meta_message_id = ? WHERE token = ?").run(messageId, activeToken);
+      } catch (dbErr) {
+        // Non-blocking DB update
+      }
+    }
+  }
+
   return {
     success: true,
-    messageId: data.messages?.[0]?.id,
+    messageId,
     recipient: cleanTo,
     templateName: resolvedName,
+    flowToken: flowTokenGenerated,
     data
   };
 }

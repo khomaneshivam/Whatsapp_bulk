@@ -74,9 +74,17 @@ async function createCampaign(req, res) {
       return res.status(400).json({ success: false, message: "At least one contact is required to create a campaign." });
     }
 
-    const type = messageType === "TEXT" ? "TEXT" : "TEMPLATE";
+    const type = (messageType === "TEXT" || messageType === "DIRECT")
+      ? "TEXT"
+      : (messageType === "FLOW" || messageType === "INTERACTIVE_FLOW")
+        ? "FLOW"
+        : "TEMPLATE";
+
     if (type === "TEMPLATE" && !templateName) {
       return res.status(400).json({ success: false, message: "Template number or name is required for template broadcasts." });
+    }
+    if (type === "FLOW" && !templateName && !mappingConfig?.flowId) {
+      return res.status(400).json({ success: false, message: "Flow ID or Name is required for Flow broadcasts." });
     }
     if (type === "TEXT" && !messageBody) {
       return res.status(400).json({ success: false, message: "Message body is required for text broadcasts." });
@@ -442,8 +450,41 @@ async function sendTestMessage(req, res) {
         to: targetPhone,
         templateName: resolvedTplName,
         languageCode: resolvedTplLang,
-        components: resolvedComponents
+        components: resolvedComponents,
+        flowActionData: req.body.flowActionData || null,
+        userId: req.user?.id || "system"
       });
+    } else if (messageType === "FLOW" || messageType === "INTERACTIVE_FLOW") {
+      const flowIdentifier = templateName || req.body.flowId;
+      let flowRecord = null;
+      if (flowIdentifier) {
+        flowRecord = db.prepare("SELECT * FROM whatsapp_flows WHERE id = ? OR meta_flow_id = ? LIMIT 1").get(flowIdentifier, flowIdentifier);
+      }
+      const effectiveMetaFlowId = flowRecord?.meta_flow_id || flowIdentifier;
+      if (!effectiveMetaFlowId) {
+        return res.status(400).json({ success: false, message: "Valid Meta Flow ID is required to send a Flow test message." });
+      }
+      const flowService = require("../services/flowService");
+      const flowToken = flowService.createFlowToken({
+        flowId: flowRecord?.id || flowIdentifier,
+        metaFlowId: effectiveMetaFlowId,
+        recipientPhone: targetPhone,
+        userId: req.user?.id || "system"
+      });
+      result = await metaWhatsAppService.sendFlowMessage({
+        to: targetPhone,
+        metaFlowId: effectiveMetaFlowId,
+        flowToken,
+        headerText: req.body.headerText || flowRecord?.name || "",
+        bodyText: messageBody || `Please complete the ${flowRecord?.name || "form"} below:`,
+        footerText: req.body.footerText || "",
+        ctaText: req.body.ctaText || "Open Form"
+      });
+      if (result?.messageId) {
+        try {
+          db.prepare("UPDATE flow_tokens SET meta_message_id = ? WHERE token = ?").run(result.messageId, flowToken);
+        } catch (e) {}
+      }
     } else {
       if (!messageBody) {
         return res.status(400).json({ success: false, message: "Message body is required." });

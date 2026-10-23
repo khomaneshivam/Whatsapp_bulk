@@ -37,6 +37,18 @@ function formatTemplateRow(row) {
   const rawCat = (row.category || "MARKETING").toUpperCase();
   const validCat = ["MARKETING", "UTILITY", "AUTHENTICATION"].includes(rawCat) ? rawCat : "MARKETING";
 
+  const buttons = row.buttons ? JSON.parse(row.buttons) : [];
+  let flowButton = null;
+  if (Array.isArray(buttons)) {
+    flowButton = buttons.find(b => String(b.type || "").toUpperCase() === "FLOW") || null;
+  }
+  if (!flowButton && Array.isArray(components)) {
+    const btnComp = components.find(c => String(c.type || "").toUpperCase() === "BUTTONS");
+    if (btnComp && Array.isArray(btnComp.buttons)) {
+      flowButton = btnComp.buttons.find(b => String(b.type || "").toUpperCase() === "FLOW") || null;
+    }
+  }
+
   return {
     id: row.id,
     name: row.name,
@@ -48,7 +60,9 @@ function formatTemplateRow(row) {
     bodyText: bodyText,
     variables: variables,
     components: components,
-    buttons: row.buttons ? JSON.parse(row.buttons) : [],
+    buttons: buttons,
+    hasFlowButton: Boolean(flowButton),
+    flowButton: flowButton,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };

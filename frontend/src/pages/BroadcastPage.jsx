@@ -1848,6 +1848,24 @@ export default function BroadcastPage() {
                               }}>
                                 {varCount > 0 ? `${varCount} vars` : 'No vars'}
                               </span>
+
+                              {/* Flow Enabled Badge */}
+                              {tmpl.hasFlowButton && (
+                                <span style={{
+                                  fontSize: '0.65rem',
+                                  color: '#4F46E5',
+                                  background: '#EEF2FF',
+                                  border: '1px solid #C7D2FE',
+                                  padding: '2px 6px',
+                                  borderRadius: '4px',
+                                  fontWeight: 700,
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '3px'
+                                }}>
+                                  ⚡ Flow
+                                </span>
+                              )}
                             </div>
 
                             {/* Body snippet */}
@@ -1895,6 +1913,22 @@ export default function BroadcastPage() {
                       <span style={{ fontSize: '0.72rem', color: '#64748B' }}>
                         (Meta ID: <code>{selectedTemplate.meta_id || selectedTemplate.id || 'N/A'}</code>)
                       </span>
+                      {selectedTemplate.hasFlowButton && (
+                        <span style={{
+                          fontSize: '0.68rem',
+                          fontWeight: 700,
+                          background: '#EEF2FF',
+                          color: '#4F46E5',
+                          border: '1px solid #C7D2FE',
+                          padding: '1px 8px',
+                          borderRadius: '999px',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '4px'
+                        }}>
+                          ⚡ WhatsApp Flow Enabled
+                        </span>
+                      )}
                     </div>
                     <span className="badge badge-success" style={{ fontSize: '0.68rem' }}>
                       {selectedTemplate.status || 'APPROVED'} • {selectedTemplate.language || 'en'}
@@ -1913,6 +1947,24 @@ export default function BroadcastPage() {
                       overflowY: 'auto'
                     }}>
                       {selectedTemplate.bodyText}
+                    </div>
+                  )}
+
+                  {selectedTemplate.hasFlowButton && (
+                    <div style={{
+                      background: '#EEF2FF',
+                      border: '1px solid #C7D2FE',
+                      borderRadius: '6px',
+                      padding: '8px 12px',
+                      marginTop: '10px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px'
+                    }}>
+                      <span style={{ fontSize: '1rem' }}>⚡</span>
+                      <div style={{ fontSize: '0.74rem', color: '#3730A3', lineHeight: 1.35 }}>
+                        <strong>Interactive WhatsApp Flow:</strong> When delivered, our broadcast engine will automatically generate a cryptographically unique <code>flow_token</code> for each recipient. All completed form submissions will be tracked in <strong>Flows &gt; Responses</strong>.
+                      </div>
                     </div>
                   )}
                 </div>

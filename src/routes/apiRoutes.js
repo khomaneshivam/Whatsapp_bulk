@@ -210,16 +210,17 @@ router.post("/broadcast/send", authenticateToken, broadcastLimiter, upload.singl
       ? Math.min(Math.max(parseInt(rawDelay, 10), 50), 10000)
       : undefined;
 
+    const resolvedType = req.body.messageType || req.body.type || "TEMPLATE";
     req.body = {
       name: campaignName || `Broadcast_${Date.now()}`,
       fileName,
-      messageType: "TEMPLATE",
-      templateName: templateName || "kt_restaurant_invitation",
+      messageType: resolvedType,
+      templateName: templateName || req.body.flowId || "kt_restaurant_invitation",
       templateLanguage: templateLang || "en",
       phoneColumn: detectedPhone,
       nameColumn: nameColumn || null,
       phoneId: phoneId || null,
-      mappingConfig: { bodyParams, headerMediaUrl, headerMediaId },
+      mappingConfig: { bodyParams, headerMediaUrl, headerMediaId, flowId: req.body.flowId },
       scheduleMode: scheduledTime ? "SCHEDULE" : "NOW",
       scheduledAt: scheduledTime || null,
       delayMs: parsedDelay,

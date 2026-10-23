@@ -234,25 +234,33 @@ export default function PhoneMockup({ template, sampleData, mediaUrl, customBody
                 flexDirection: 'column',
                 gap: '5px'
               }}>
-                {buttons.map((btn, idx) => (
-                  <button
-                    key={idx}
-                    type="button"
-                    style={{
-                      background: 'rgba(0, 168, 132, 0.1)',
-                      border: '1px solid rgba(0, 168, 132, 0.3)',
-                      color: '#00a884',
-                      padding: '5px 8px',
-                      borderRadius: '5px',
-                      fontSize: '0.75rem',
-                      fontWeight: 600,
-                      cursor: 'pointer',
-                      textAlign: 'center'
-                    }}
-                  >
-                    {btn.text || btn.url || `Option ${idx + 1}`}
-                  </button>
-                ))}
+                {buttons.map((btn, idx) => {
+                  const isFlow = String(btn.type || '').toUpperCase() === 'FLOW';
+                  return (
+                    <button
+                      key={idx}
+                      type="button"
+                      style={{
+                        background: isFlow ? 'rgba(99, 102, 241, 0.15)' : 'rgba(0, 168, 132, 0.1)',
+                        border: isFlow ? '1px solid rgba(99, 102, 241, 0.4)' : '1px solid rgba(0, 168, 132, 0.3)',
+                        color: isFlow ? '#818cf8' : '#00a884',
+                        padding: '6px 8px',
+                        borderRadius: '6px',
+                        fontSize: '0.75rem',
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                        textAlign: 'center',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '6px'
+                      }}
+                    >
+                      {isFlow && <span style={{ fontSize: '0.8rem' }}>⚡</span>}
+                      <span>{btn.text || btn.url || (isFlow ? 'Open Form' : `Option ${idx + 1}`)}</span>
+                    </button>
+                  );
+                })}
               </div>
             )}
           </div>

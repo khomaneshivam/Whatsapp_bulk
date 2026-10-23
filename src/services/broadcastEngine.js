@@ -32,7 +32,7 @@ class BroadcastEngine extends EventEmitter {
   /**
    * Builds template components array from mapping configuration
    */
-  buildTemplateComponents(mappingConfig = {}, rowData = {}, templateName = "") {
+  buildTemplateComponents(mappingConfig = {}, rowData = {}, templateName = "", recipient = null, campaignId = null) {
     const cleanTplName = String(templateName || "").trim().toLowerCase();
     const components = [];
 
@@ -127,23 +127,19 @@ class BroadcastEngine extends EventEmitter {
             { type: "text", parameter_name: "link", text: String(p3).trim() }
           ]
         });
-        return components;
+      } else {
+        // Default positional for kt_invitation_
+        components.push({
+          type: "body",
+          parameters: [
+            { type: "text", text: String(p1).trim() },
+            { type: "text", text: String(p2).trim() },
+            { type: "text", text: String(p3).trim() }
+          ]
+        });
       }
-
-      // Default positional for kt_invitation_
-      components.push({
-        type: "body",
-        parameters: [
-          { type: "text", text: String(p1).trim() },
-          { type: "text", text: String(p2).trim() },
-          { type: "text", text: String(p3).trim() }
-        ]
-      });
-      return components;
-    }
-
-    // Generic dynamic parameter builder for ANY template
-    if (Array.isArray(bodyParams) && bodyParams.length > 0) {
+    } else if (Array.isArray(bodyParams) && bodyParams.length > 0) {
+      // Generic dynamic parameter builder for ANY template
       const isNamed = mappingConfig.parameterFormat === "NAMED";
       const paramKeys = mappingConfig.paramKeys || [];
 
@@ -233,6 +229,78 @@ class BroadcastEngine extends EventEmitter {
           });
         }
       } catch (e) {}
+    }
+
+    // 4. Process BUTTONS component (FLOW buttons, dynamic actions)
+    let buttons = [];
+    if (tplRow && tplRow.buttons) {
+      try {
+        buttons = JSON.parse(tplRow.buttons);
+      } catch (e) {
+        buttons = [];
+      }
+    }
+    if (buttons.length === 0 && Array.isArray(tplComponents)) {
+      const btnComp = tplComponents.find(c => String(c.type || "").toUpperCase() === "BUTTONS");
+      if (btnComp && Array.isArray(btnComp.buttons)) {
+        buttons = btnComp.buttons;
+      }
+    }
+
+    if (Array.isArray(buttons) && buttons.length > 0) {
+      buttons.forEach((btn, btnIdx) => {
+        const btnType = String(btn.type || "").toUpperCase();
+        if (btnType === "FLOW") {
+          const existingFlow = components.some(c => c.type === "button" && c.sub_type === "flow" && String(c.index) === String(btnIdx));
+          if (!existingFlow) {
+            let flowToken = null;
+            const targetPhone = recipient?.clean_phone || recipient?.phone_number || rowData.phone || rowData.Phone;
+            if (targetPhone) {
+              try {
+                const flowService = require("./flowService");
+                flowToken = flowService.createFlowToken({
+                  flowId: btn.flow_id || tplRow?.meta_id || tplRow?.id,
+                  metaFlowId: btn.flow_id || null,
+                  recipientPhone: targetPhone,
+                  campaignId: campaignId || null,
+                  userId: "system"
+                });
+              } catch (tokenErr) {
+                console.warn("[BroadcastEngine] Token creation note:", tokenErr.message);
+              }
+            }
+
+            const actionPayload = {
+              flow_token: flowToken || `flwtk_${Date.now()}`
+            };
+
+            let flowActionData = mappingConfig?.flowActionData;
+            if (!flowActionData && mappingConfig?.flowDataMappings && typeof mappingConfig.flowDataMappings === "object") {
+              flowActionData = {};
+              for (const [flowField, colName] of Object.entries(mappingConfig.flowDataMappings)) {
+                if (rowData[colName] !== undefined) {
+                  flowActionData[flowField] = rowData[colName];
+                }
+              }
+            }
+            if (flowActionData && Object.keys(flowActionData).length > 0) {
+              actionPayload.flow_action_data = flowActionData;
+            }
+
+            components.push({
+              type: "button",
+              sub_type: "flow",
+              index: String(btnIdx),
+              parameters: [
+                {
+                  type: "action",
+                  action: actionPayload
+                }
+              ]
+            });
+          }
+        }
+      });
     }
 
     return components;
@@ -542,7 +610,7 @@ class BroadcastEngine extends EventEmitter {
                   tplLang = "en";
                 }
 
-                const components = this.buildTemplateComponents(mappingConfig, rowData, tplName);
+                const components = this.buildTemplateComponents(mappingConfig, rowData, tplName, recipient, campaign.id);
                 const readableText = this.renderReadableTemplate(tplName, components, rowData, recipient.contact_name);
                 renderedContent = readableText || JSON.stringify(components);
 
@@ -550,8 +618,57 @@ class BroadcastEngine extends EventEmitter {
                   to: recipient.clean_phone,
                   templateName: tplName,
                   languageCode: tplLang || "en",
-                  components: components
+                  components: components,
+                  campaignId: campaign.id,
+                  userId: campaign.user_id || "system"
                 });
+
+                // Link Meta Message ID to the Flow Token for webhook submission tracking
+                if (sendResult?.messageId) {
+                  const flowComp = components.find(c => c.type === "button" && c.sub_type === "flow");
+                  const activeToken = flowComp?.parameters?.[0]?.action?.flow_token;
+                  if (activeToken) {
+                    try {
+                      db.prepare("UPDATE flow_tokens SET meta_message_id = ? WHERE token = ?").run(sendResult.messageId, activeToken);
+                    } catch (e) {}
+                  }
+                }
+              } else if (campaign.message_type === "FLOW" || campaign.message_type === "INTERACTIVE_FLOW") {
+                // Direct WhatsApp Interactive Flow Message dispatch
+                const flowIdentifier = campaign.template_name || mappingConfig?.flowId;
+                let flowRecord = null;
+                if (flowIdentifier) {
+                  flowRecord = db.prepare("SELECT * FROM whatsapp_flows WHERE id = ? OR meta_flow_id = ? LIMIT 1").get(flowIdentifier, flowIdentifier);
+                }
+                const effectiveMetaFlowId = flowRecord?.meta_flow_id || flowIdentifier;
+                const flowService = require("./flowService");
+                const flowToken = flowService.createFlowToken({
+                  flowId: flowRecord?.id || flowIdentifier || "flow",
+                  metaFlowId: effectiveMetaFlowId,
+                  recipientPhone: recipient.clean_phone,
+                  campaignId: campaign.id,
+                  userId: campaign.user_id || "system"
+                });
+
+                const rawBody = campaign.message_body || mappingConfig?.bodyText || `Please complete the ${flowRecord?.name || "form"} below:`;
+                const interpolatedBody = this.interpolateText(rawBody, rowData);
+                renderedContent = `[Flow: ${flowRecord?.name || "Interactive Form"}] ${interpolatedBody}`;
+
+                sendResult = await metaWhatsAppService.sendFlowMessage({
+                  to: recipient.clean_phone,
+                  metaFlowId: effectiveMetaFlowId,
+                  flowToken: flowToken,
+                  headerText: mappingConfig?.headerText || flowRecord?.name || "",
+                  bodyText: interpolatedBody,
+                  footerText: mappingConfig?.footerText || "",
+                  ctaText: mappingConfig?.ctaText || "Open Form"
+                });
+
+                if (sendResult?.messageId) {
+                  try {
+                    db.prepare("UPDATE flow_tokens SET meta_message_id = ? WHERE token = ?").run(sendResult.messageId, flowToken);
+                  } catch (e) {}
+                }
               } else {
                 // Direct Text Message
                 renderedContent = this.interpolateText(campaign.message_body, rowData);
