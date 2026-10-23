@@ -11,7 +11,8 @@ import {
   Smartphone,
   ChevronRight,
   UserCheck,
-  LogOut
+  LogOut,
+  Layers
 } from 'lucide-react';
 
 export default function Sidebar({ activeTab, setActiveTab, mobileOpen, setMobileOpen }) {
@@ -20,6 +21,7 @@ export default function Sidebar({ activeTab, setActiveTab, mobileOpen, setMobile
   const navItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { id: 'broadcast', label: 'Broadcast Studio', icon: Send },
+    { id: 'flows', label: 'WhatsApp Flows', icon: Layers, badge: 'New' },
     { id: 'automation', label: 'Booking Lifecycle', icon: Cpu },
     { id: 'inbox', label: '2-Way Inbox', icon: MessageSquare },
     { id: 'reports', label: 'Delivery Reports', icon: BarChart3 },

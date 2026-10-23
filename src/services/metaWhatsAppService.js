@@ -836,6 +836,136 @@ async function downloadAndSaveInboundMedia(mediaId, customCredentials = null) {
   };
 }
 
+/**
+ * Sends an Interactive WhatsApp Flow Message
+ */
+async function sendFlowMessage({
+  to,
+  flowId,
+  metaFlowId,
+  flowToken,
+  headerText = "",
+  bodyText,
+  footerText = "",
+  ctaText = "Open Form",
+  screen = null,
+  screenId = null,
+  screenData = {},
+  customCredentials = null
+}) {
+  const creds = customCredentials || getActiveCredentials();
+  const defaultCountry = getSetting("DEFAULT_COUNTRY_CODE") || "91";
+  const effectiveFlowId = flowId || metaFlowId;
+  const effectiveScreen = screen || screenId;
+
+  if (!to || String(to).trim().length === 0) {
+    return { success: false, error: "Valid recipient phone number is required" };
+  }
+  const cleanTo = cleanPhone(to, defaultCountry);
+  if (!cleanTo || cleanTo.length < 10) {
+    return { success: false, error: "Valid recipient phone number is required" };
+  }
+  if (!effectiveFlowId || !String(effectiveFlowId).trim()) {
+    return { success: false, error: "Meta flowId is required to send a Flow message." };
+  }
+  if (!flowToken || !String(flowToken).trim()) {
+    return { success: false, error: "Server-generated flowToken is required to send a Flow message." };
+  }
+  if (!bodyText || !String(bodyText).trim()) {
+    return { success: false, error: "Message bodyText is required for Flow messages." };
+  }
+
+  const url = `${META_BASE_URL}/${creds.phoneNumberId}/messages`;
+
+  const flowActionPayload = {
+    screen: effectiveScreen || undefined,
+    data: screenData && Object.keys(screenData).length > 0 ? screenData : undefined
+  };
+
+  const interactive = {
+    type: "flow",
+    body: {
+      text: String(bodyText).trim()
+    },
+    action: {
+      name: "flow",
+      parameters: {
+        flow_message_version: "3",
+        flow_token: flowToken,
+        flow_id: String(effectiveFlowId).trim(),
+        flow_cta: String(ctaText || "Open Form").trim().substring(0, 20),
+        flow_action: "navigate",
+        flow_action_payload: flowActionPayload
+      }
+    }
+  };
+
+  if (headerText && String(headerText).trim()) {
+    interactive.header = {
+      type: "text",
+      text: String(headerText).trim().substring(0, 60)
+    };
+  }
+
+  if (footerText && String(footerText).trim()) {
+    interactive.footer = {
+      type: "text",
+      text: String(footerText).trim().substring(0, 60)
+    };
+  }
+
+  const payload = {
+    messaging_product: "whatsapp",
+    recipient_type: "individual",
+    to: cleanTo,
+    type: "interactive",
+    interactive
+  };
+
+  let res, data;
+  try {
+    try {
+      res = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${creds.token}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(15000)
+      });
+      data = await res.json();
+    } catch (netErr) {
+      if (netErr.name === "TimeoutError" || netErr.name === "AbortError" || netErr.code === "ECONNRESET" || netErr.code === "ETIMEDOUT" || netErr.message?.includes("fetch failed")) {
+        const ambErr = new Error(`Ambiguous outcome: Meta request timed out or network dropped (${netErr.message})`);
+        ambErr.isAmbiguous = true;
+        ambErr.code = "NETWORK_AMBIGUOUS";
+        throw ambErr;
+      }
+      throw netErr;
+    }
+
+    if (!res.ok) {
+      throw parseMetaError(data, res.status);
+    }
+
+    return {
+      success: true,
+      messageId: data.messages?.[0]?.id,
+      recipient: cleanTo,
+      flowToken,
+      data
+    };
+  } catch (err) {
+    return {
+      success: false,
+      error: err.message,
+      isAmbiguous: Boolean(err.isAmbiguous),
+      code: err.code
+    };
+  }
+}
+
 module.exports = {
   getActiveCredentials,
   testConnection,
@@ -847,6 +977,7 @@ module.exports = {
   sendTemplateMessage,
   sendTextMessage,
   sendMediaMessage,
+  sendFlowMessage,
   uploadMedia,
   getMediaDetails,
   downloadMediaBuffer,

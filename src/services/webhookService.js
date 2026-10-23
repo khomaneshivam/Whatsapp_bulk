@@ -192,13 +192,31 @@ class WebhookService {
       case "button":
         messageBody = msg.button?.text || msg.button?.payload || "[Button Clicked]";
         break;
-      case "interactive":
-        messageBody =
-          msg.interactive?.button_reply?.title ||
-          msg.interactive?.list_reply?.title ||
-          msg.interactive?.button_reply?.id ||
-          "[Interactive Reply]";
+      case "interactive": {
+        const interactiveType = msg.interactive?.type;
+        if (interactiveType === "nfm_reply" && msg.interactive?.nfm_reply) {
+          const nfm = msg.interactive.nfm_reply;
+          let parsedResponse = {};
+          try {
+            parsedResponse = typeof nfm.response_json === "string" ? JSON.parse(nfm.response_json) : (nfm.response_json || {});
+          } catch (e) {
+            parsedResponse = { raw: nfm.response_json };
+          }
+          const fieldEntries = Object.entries(parsedResponse).filter(([k]) => k !== "flow_token");
+          const fieldsSummary = fieldEntries
+            .map(([k, v]) => `${k.replace(/^[a-zA-Z0-9]+_/, "")}: ${typeof v === "object" ? JSON.stringify(v) : v}`)
+            .slice(0, 4)
+            .join(", ");
+          messageBody = `[Flow Completed] ${fieldsSummary || nfm.body || "Form submitted"}`;
+        } else {
+          messageBody =
+            msg.interactive?.button_reply?.title ||
+            msg.interactive?.list_reply?.title ||
+            msg.interactive?.button_reply?.id ||
+            "[Interactive Reply]";
+        }
         break;
+      }
       case "reaction":
         messageBody = msg.reaction?.emoji ? `[Reaction: ${msg.reaction.emoji}]` : "[Reaction]";
         break;
@@ -347,13 +365,102 @@ class WebhookService {
       }
     }
 
+    // ---------------------------------------------------------------------
+    // Flow Submission Processing (nfm_reply)
+    // ---------------------------------------------------------------------
+    let flowId = null;
+    let flowResponseId = null;
+    if (msgType === "interactive" && msg.interactive?.type === "nfm_reply") {
+      const nfm = msg.interactive.nfm_reply;
+      let parsedResponse = {};
+      try {
+        parsedResponse = typeof nfm.response_json === "string" ? JSON.parse(nfm.response_json) : (nfm.response_json || {});
+      } catch (e) {
+        parsedResponse = { raw: nfm.response_json };
+      }
+
+      const clientToken = parsedResponse.flow_token;
+      let tokenRecord = null;
+      if (clientToken) {
+        tokenRecord = db.prepare("SELECT * FROM flow_tokens WHERE token = ?").get(clientToken);
+      }
+      if (!tokenRecord && contextMsgId) {
+        tokenRecord = db.prepare("SELECT * FROM flow_tokens WHERE meta_message_id = ?").get(contextMsgId);
+      }
+      if (!tokenRecord && cleanPhone) {
+        tokenRecord = db.prepare("SELECT * FROM flow_tokens WHERE clean_phone = ? AND status = 'ACTIVE' ORDER BY id DESC LIMIT 1").get(cleanPhone);
+      }
+
+      if (tokenRecord) {
+        flowId = tokenRecord.flow_id;
+        if (!replyUserId && tokenRecord.user_id) replyUserId = tokenRecord.user_id;
+        if (!matchedCampaignId && tokenRecord.campaign_id) matchedCampaignId = tokenRecord.campaign_id;
+        try {
+          db.prepare("UPDATE flow_tokens SET status = 'COMPLETED' WHERE id = ?").run(tokenRecord.id);
+        } catch (e) {}
+      }
+
+      // Lookup flow title for clean message body
+      if (flowId) {
+        try {
+          const flowMeta = db.prepare("SELECT name FROM whatsapp_flows WHERE id = ? OR meta_flow_id = ?").get(flowId, flowId);
+          if (flowMeta?.name) {
+            const fieldEntries = Object.entries(parsedResponse).filter(([k]) => k !== "flow_token");
+            const fieldsSummary = fieldEntries
+              .map(([k, v]) => `${k.replace(/^[a-zA-Z0-9]+_/, "")}: ${typeof v === "object" ? JSON.stringify(v) : v}`)
+              .slice(0, 4)
+              .join(", ");
+            messageBody = `[Flow: ${flowMeta.name}] ${fieldsSummary || "Form submitted"}`;
+          }
+        } catch (e) {}
+      }
+
+      // Insert into flow_responses (idempotent by wa_message_id)
+      try {
+        const jsonString = typeof nfm.response_json === "string" ? nfm.response_json : JSON.stringify(nfm.response_json || {});
+        const insertFlowResp = db.prepare(`
+          INSERT OR IGNORE INTO flow_responses (
+            flow_id, flow_token, wa_message_id, from_phone, sender_phone, clean_phone,
+            customer_name, response_json, response_data, parsed_data, user_id, campaign_id, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        `);
+        const respResult = insertFlowResp.run(
+          flowId || (tokenRecord?.flow_id || "unassigned_flow"),
+          tokenRecord?.token || clientToken || "untracked",
+          waMessageId,
+          fromPhone,
+          fromPhone,
+          cleanPhone,
+          customerName,
+          jsonString,
+          jsonString,
+          JSON.stringify(parsedResponse),
+          replyUserId,
+          matchedCampaignId
+        );
+        flowResponseId = respResult.lastInsertRowid || null;
+
+        // Broadcast real-time SSE event
+        broadcastEngine.emit("webhook:flow_response", {
+          responseId: flowResponseId,
+          flowId,
+          customerName,
+          fromPhone,
+          cleanPhone,
+          answers: parsedResponse
+        });
+      } catch (respErr) {
+        console.warn("[Webhook FlowResponse] Insert notice:", respErr.message);
+      }
+    }
+
     const insertStmt = db.prepare(`
       INSERT INTO customer_replies (
         wa_message_id, from_phone, customer_name, message_type,
         message_body, raw_payload, context_message_id, campaign_id,
-        media_url, media_type, media_caption,
+        media_url, media_type, media_caption, flow_id, flow_response_id,
         is_read, user_id, received_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
     `);
 
     const runResult = insertStmt.run(
@@ -368,6 +475,8 @@ class WebhookService {
       incomingMediaUrl,
       incomingMediaType,
       incomingMediaCaption,
+      flowId,
+      flowResponseId,
       replyUserId,
       receivedAt
     );
@@ -389,6 +498,34 @@ class WebhookService {
     `).get(runResult.lastInsertRowid);
 
     return { saved: true, reply: savedRecord };
+  }
+
+  /**
+   * Helper to handle customer reply for ingestion and webhook testing
+   */
+  async handleCustomerReply(msg, customerName = "") {
+    if (!msg || !msg.id) return null;
+    const existing = db.prepare("SELECT id FROM customer_replies WHERE wa_message_id = ?").get(msg.id);
+    if (existing) {
+      return null;
+    }
+
+    const contacts = customerName ? [{ wa_id: msg.from, profile: { name: customerName } }] : [];
+    const res = this.saveCustomerReply(msg, contacts);
+    if (!res || !res.saved || !res.reply) {
+      return null;
+    }
+
+    const reply = res.reply;
+    const isFlow = (msg.type === "interactive" && msg.interactive?.type === "nfm_reply") || reply.flow_id || reply.flow_response_id;
+    const returnType = isFlow ? "flow_response" : (reply.message_type || msg.type);
+
+    return {
+      ...reply,
+      wa_message_id: reply.wa_message_id,
+      message_type: returnType,
+      text: reply.message_body || ""
+    };
   }
 
   /**

@@ -109,16 +109,18 @@ app.get("/uploads/inbound/:filename", async (req, res, next) => {
 
 app.use("/uploads", express.static(uploadsPath));
 
-// 4. Direct Root-level Webhook endpoints for Meta (https://domain/webhook)
+// 4. Direct Root-level Webhook & Flow Data-Exchange endpoints for Meta
+const flowController = require("./src/controllers/flowController");
 app.get("/webhook", webhookController.handleVerification);
 app.post("/webhook", webhookController.handleIncomingEvent);
+app.post("/flows/exchange", flowController.handleDataExchange);
 
 // 5. API routes
 app.use("/api", apiRoutes);
 
 // 6. SPA fallback
 app.get("*", (req, res) => {
-  if (!req.path.startsWith("/api") && !req.path.startsWith("/webhook") && !req.path.startsWith("/uploads")) {
+  if (!req.path.startsWith("/api") && !req.path.startsWith("/webhook") && !req.path.startsWith("/uploads") && !req.path.startsWith("/flows")) {
     if (fs.existsSync(path.join(distPath, "index.html"))) {
       res.sendFile(path.join(distPath, "index.html"));
     } else {

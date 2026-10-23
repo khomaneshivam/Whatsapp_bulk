@@ -5,6 +5,7 @@ import Topbar from './components/Topbar';
 import ImpersonationBanner from './components/ImpersonationBanner';
 import DashboardPage from './pages/DashboardPage';
 import BroadcastPage from './pages/BroadcastPage';
+import FlowsPage from './pages/FlowsPage';
 import AutomationPage from './pages/AutomationPage';
 import InboxPage from './pages/InboxPage';
 import ReportsPage from './pages/ReportsPage';
@@ -84,6 +85,7 @@ function AppContent() {
           <main style={{ flex: 1, paddingBottom: '40px' }}>
             {activeTab === 'dashboard' && <DashboardPage setActiveTab={setActiveTab} />}
             {activeTab === 'broadcast' && <BroadcastPage />}
+            {activeTab === 'flows' && <FlowsPage />}
             {activeTab === 'automation' && <AutomationPage />}
             {activeTab === 'inbox' && <InboxPage />}
             {activeTab === 'reports' && <ReportsPage />}

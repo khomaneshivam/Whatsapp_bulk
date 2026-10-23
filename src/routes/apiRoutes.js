@@ -305,6 +305,30 @@ router.get("/templates/:templateId", authenticateToken, templateController.getTe
 router.delete("/templates/:templateId", authenticateToken, requireAdmin, templateController.deleteTemplate);
 
 // =========================================================================
+// 6.5. WHATSAPP FLOWS MANAGEMENT (Protected & Scoped)
+// =========================================================================
+const flowController = require("../controllers/flowController");
+
+// Public Meta Dynamic Flow Data-Exchange Endpoint
+router.post("/flows/exchange", flowController.handleDataExchange);
+
+// Flows Management & Operations
+router.get("/flows", authenticateToken, flowController.listFlows);
+router.get("/flows/starter-templates", authenticateToken, flowController.getStarterTemplates);
+router.get("/flows/responses", authenticateToken, flowController.listResponses);
+router.get("/flows/crypto/config", authenticateToken, flowController.getCryptoConfig);
+router.post("/flows/crypto/generate-keypair", authenticateToken, requireAdmin, flowController.generateKeyPair);
+router.post("/flows/sync", authenticateToken, requireAdmin, flowController.syncMeta);
+router.post("/flows", authenticateToken, flowController.createFlow);
+router.get("/flows/:flowId", authenticateToken, flowController.getFlow);
+router.put("/flows/:flowId", authenticateToken, flowController.updateFlow);
+router.post("/flows/:flowId/push", authenticateToken, requireAdmin, flowController.pushFlowToMeta);
+router.post("/flows/:flowId/publish", authenticateToken, requireAdmin, flowController.publishFlow);
+router.post("/flows/:flowId/deprecate", authenticateToken, requireAdmin, flowController.deprecateFlow);
+router.delete("/flows/:flowId", authenticateToken, flowController.deleteFlow);
+router.post("/flows/:flowId/send-test", authenticateToken, flowController.sendTestFlow);
+
+// =========================================================================
 // 7. META WEBHOOKS & CUSTOMER REPLIES MANAGEMENT
 // =========================================================================
 const webhookController = require("../controllers/webhookController");

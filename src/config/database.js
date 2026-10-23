@@ -204,6 +204,59 @@ function initializeDatabase() {
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     );
 
+    CREATE TABLE IF NOT EXISTS whatsapp_flows (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      description TEXT,
+      meta_flow_id TEXT UNIQUE,
+      status TEXT DEFAULT 'DRAFT',
+      categories TEXT DEFAULT '["OTHER"]',
+      flow_json TEXT NOT NULL,
+      json_version TEXT DEFAULT '3.1',
+      data_api_version TEXT DEFAULT '3.0',
+      endpoint_uri TEXT,
+      preview_url TEXT,
+      validation_errors TEXT DEFAULT '[]',
+      sync_status TEXT DEFAULT 'LOCAL',
+      last_sync_at DATETIME,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS flow_tokens (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      token TEXT UNIQUE NOT NULL,
+      flow_id TEXT NOT NULL,
+      meta_flow_id TEXT,
+      recipient_phone TEXT NOT NULL,
+      clean_phone TEXT,
+      meta_message_id TEXT,
+      context_message_id TEXT,
+      campaign_id TEXT,
+      user_id TEXT DEFAULT 'system',
+      status TEXT DEFAULT 'ACTIVE',
+      expires_at DATETIME,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS flow_responses (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      flow_id TEXT NOT NULL,
+      flow_token TEXT,
+      wa_message_id TEXT UNIQUE,
+      from_phone TEXT,
+      sender_phone TEXT,
+      clean_phone TEXT,
+      customer_name TEXT,
+      response_json TEXT,
+      response_data TEXT,
+      parsed_data TEXT,
+      user_id TEXT,
+      campaign_id TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
     CREATE INDEX IF NOT EXISTS idx_recipients_campaign ON campaign_recipients(campaign_id);
     CREATE INDEX IF NOT EXISTS idx_recipients_status ON campaign_recipients(campaign_id, status);
     CREATE INDEX IF NOT EXISTS idx_templates_name ON templates(name);
@@ -225,6 +278,16 @@ function initializeDatabase() {
     CREATE INDEX IF NOT EXISTS idx_audit_user ON audit_logs(user_id);
     CREATE INDEX IF NOT EXISTS idx_resets_token ON password_resets(token_hash, used, expires_at);
     CREATE INDEX IF NOT EXISTS idx_resets_user ON password_resets(user_id);
+    CREATE INDEX IF NOT EXISTS idx_flows_user ON whatsapp_flows(user_id);
+    CREATE INDEX IF NOT EXISTS idx_flows_meta_id ON whatsapp_flows(meta_flow_id);
+    CREATE INDEX IF NOT EXISTS idx_flows_status ON whatsapp_flows(status);
+    CREATE INDEX IF NOT EXISTS idx_flow_tokens_token ON flow_tokens(token);
+    CREATE INDEX IF NOT EXISTS idx_flow_tokens_phone ON flow_tokens(clean_phone);
+    CREATE INDEX IF NOT EXISTS idx_flow_tokens_flow ON flow_tokens(flow_id);
+    CREATE INDEX IF NOT EXISTS idx_flow_responses_flow ON flow_responses(flow_id);
+    CREATE INDEX IF NOT EXISTS idx_flow_responses_phone ON flow_responses(clean_phone);
+    CREATE INDEX IF NOT EXISTS idx_flow_responses_wa_msg ON flow_responses(wa_message_id);
+    CREATE INDEX IF NOT EXISTS idx_flow_responses_user ON flow_responses(user_id);
   `);
 
   // Migrate existing databases: add scheduled_at, unknown_count, estimated_cost to campaigns
@@ -270,9 +333,64 @@ function initializeDatabase() {
     if (!cols.includes("media_caption")) {
       db.exec("ALTER TABLE customer_replies ADD COLUMN media_caption TEXT;");
     }
+    if (!cols.includes("flow_id")) {
+      db.exec("ALTER TABLE customer_replies ADD COLUMN flow_id TEXT;");
+    }
+    if (!cols.includes("flow_response_id")) {
+      db.exec("ALTER TABLE customer_replies ADD COLUMN flow_response_id INTEGER;");
+    }
     db.exec("CREATE INDEX IF NOT EXISTS idx_customer_replies_user ON customer_replies(user_id);");
+    db.exec("CREATE INDEX IF NOT EXISTS idx_customer_replies_flow ON customer_replies(flow_id);");
   } catch (migErr2) {
     console.warn("[DB Migration] customer_replies columns check:", migErr2.message);
+  }
+
+  // Migrate flow_tokens and flow_responses columns & constraints
+  try {
+    const ftInfo = db.prepare("PRAGMA table_info(flow_tokens)").all();
+    const cleanPhoneCol = ftInfo.find(c => c.name === "clean_phone");
+    if (cleanPhoneCol && cleanPhoneCol.notnull === 1) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS flow_tokens_v2 (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          token TEXT UNIQUE NOT NULL,
+          flow_id TEXT NOT NULL,
+          meta_flow_id TEXT,
+          recipient_phone TEXT NOT NULL,
+          clean_phone TEXT,
+          meta_message_id TEXT,
+          context_message_id TEXT,
+          campaign_id TEXT,
+          user_id TEXT DEFAULT 'system',
+          status TEXT DEFAULT 'ACTIVE',
+          expires_at DATETIME,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+        INSERT OR IGNORE INTO flow_tokens_v2 (id, token, flow_id, meta_flow_id, recipient_phone, clean_phone, meta_message_id, campaign_id, user_id, status, expires_at, created_at)
+          SELECT id, token, flow_id, meta_flow_id, recipient_phone, clean_phone, meta_message_id, campaign_id, user_id, status, expires_at, created_at FROM flow_tokens;
+        DROP TABLE flow_tokens;
+        ALTER TABLE flow_tokens_v2 RENAME TO flow_tokens;
+        CREATE INDEX IF NOT EXISTS idx_flow_tokens_token ON flow_tokens(token);
+        CREATE INDEX IF NOT EXISTS idx_flow_tokens_phone ON flow_tokens(clean_phone);
+        CREATE INDEX IF NOT EXISTS idx_flow_tokens_flow ON flow_tokens(flow_id);
+      `);
+    } else {
+      const ftCols = ftInfo.map(c => c.name);
+      if (!ftCols.includes("context_message_id")) {
+        db.exec("ALTER TABLE flow_tokens ADD COLUMN context_message_id TEXT;");
+      }
+    }
+
+    const frInfo = db.prepare("PRAGMA table_info(flow_responses)").all();
+    const frCols = frInfo.map(c => c.name);
+    if (!frCols.includes("sender_phone")) {
+      db.exec("ALTER TABLE flow_responses ADD COLUMN sender_phone TEXT;");
+    }
+    if (!frCols.includes("response_data")) {
+      db.exec("ALTER TABLE flow_responses ADD COLUMN response_data TEXT;");
+    }
+  } catch (flowMigErr) {
+    console.warn("[DB Migration] flow tables migration notice:", flowMigErr.message);
   }
 
   // Migrate campaigns: add user_id and phone_number_id columns if not present
@@ -490,6 +608,42 @@ function initializeDatabase() {
   }
   if (!getSetting.get("CHECKOUT_TEMPLATE")) {
     setSetting.run("CHECKOUT_TEMPLATE", "kt_checkout_belongings_reminder");
+  }
+  if (!getSetting.get("WHATSAPP_FLOWS_ENABLED")) {
+    setSetting.run("WHATSAPP_FLOWS_ENABLED", config.WHATSAPP_FLOWS_ENABLED ? "true" : "false");
+  }
+
+  // Seed starter templates into whatsapp_flows as local DRAFTs if table is empty
+  try {
+    const flowCount = db.prepare("SELECT COUNT(*) as count FROM whatsapp_flows").get()?.count || 0;
+    if (flowCount === 0) {
+      const primaryAdmin = db.prepare("SELECT id FROM users WHERE role = 'ADMIN' ORDER BY created_at ASC LIMIT 1").get();
+      const adminId = primaryAdmin?.id || "system";
+      const { STARTER_TEMPLATES } = require("../services/flowStarterTemplates");
+      const insertFlow = db.prepare(`
+        INSERT INTO whatsapp_flows (
+          id, user_id, name, description, meta_flow_id, status, categories,
+          flow_json, json_version, data_api_version, endpoint_uri, preview_url,
+          validation_errors, sync_status, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, NULL, 'DRAFT', ?, ?, ?, ?, NULL, NULL, '[]', 'LOCAL', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `);
+
+      for (const tpl of STARTER_TEMPLATES) {
+        const flowId = crypto.randomUUID();
+        insertFlow.run(
+          flowId,
+          adminId,
+          tpl.name,
+          tpl.description,
+          JSON.stringify(tpl.categories),
+          JSON.stringify(tpl.flow_json),
+          tpl.json_version,
+          tpl.data_api_version
+        );
+      }
+    }
+  } catch (flowSeedErr) {
+    console.warn("[DB Seed] whatsapp_flows starter seed notice:", flowSeedErr.message);
   }
 }
 

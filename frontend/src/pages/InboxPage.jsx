@@ -25,7 +25,8 @@ import {
   Bot,
   CheckCircle2,
   Clock,
-  Settings2
+  Settings2,
+  Layers
 } from 'lucide-react';
 import { formatIndianTime } from '../utils/indianTime';
 
@@ -284,6 +285,78 @@ export default function InboxPage() {
   const [lightboxMedia, setLightboxMedia] = useState(null);
   const [lightboxZoomed, setLightboxZoomed] = useState(false);
   const [downloadingMedia, setDownloadingMedia] = useState(false);
+
+  // WhatsApp Flows sending modal state
+  const [showFlowModal, setShowFlowModal] = useState(false);
+  const [availableFlows, setAvailableFlows] = useState([]);
+  const [selectedFlowId, setSelectedFlowId] = useState('');
+  const [flowBodyText, setFlowBodyText] = useState('');
+  const [flowCtaText, setFlowCtaText] = useState('Open Form');
+  const [sendingFlow, setSendingFlow] = useState(false);
+
+  async function handleOpenFlowModal() {
+    try {
+      const res = await fetch('/api/flows', { headers: { Authorization: `Bearer ${token}` } });
+      const data = await res.json();
+      if (data.success) {
+        const eligible = (data.data || []).filter(f => f.meta_flow_id);
+        setAvailableFlows(eligible);
+        if (eligible.length > 0) {
+          setSelectedFlowId(eligible[0].id);
+          setFlowBodyText(`Hi ${selectedConvo?.name || 'there'}! Please take a moment to complete our ${eligible[0].name} form:`);
+        }
+      }
+    } catch (e) {}
+    setShowFlowModal(true);
+  }
+
+  async function handleSendFlowMessage() {
+    if (!selectedFlowId || !selectedConvo?.phone) return;
+    setSendingFlow(true);
+    try {
+      const targetFlow = availableFlows.find(f => f.id === selectedFlowId);
+      const res = await fetch(`/api/flows/${selectedFlowId}/send-test`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          to: selectedConvo.phone,
+          bodyText: flowBodyText || `Please complete the form:`,
+          ctaText: flowCtaText || 'Open Form',
+          headerText: targetFlow?.name || 'Interactive Form'
+        })
+      });
+      const data = await res.json();
+      if (data.success) {
+        const newMsg = {
+          id: data.messageId || `flw_${Date.now()}`,
+          from_phone: 'Agent',
+          text: `[Sent WhatsApp Flow: ${targetFlow?.name || 'Interactive Form'}]`,
+          time: new Date().toISOString(),
+          is_outbound: true,
+          status: 'SENT'
+        };
+        const updatedMessages = [...selectedConvo.messages, newMsg];
+        const updatedConvo = {
+          ...selectedConvo,
+          messages: updatedMessages,
+          lastMessage: `You: [WhatsApp Flow: ${targetFlow?.name}]`,
+          lastTime: newMsg.time
+        };
+        setSelectedConvo(updatedConvo);
+        setConversations(prev => prev.map(c => (c.phone === selectedConvo.phone ? updatedConvo : c)));
+        setShowFlowModal(false);
+      } else {
+        alert(data.message || 'Failed to send Flow message.');
+      }
+    } catch (err) {
+      alert(err.message || 'Error sending Flow message.');
+    } finally {
+      setSendingFlow(false);
+    }
+  }
 
   // DOM element and workflow references
   const messagesEndRef = useRef(null);
@@ -1401,14 +1474,44 @@ export default function InboxPage() {
 
                       {/* Preserved Formatted Text with Linebreaks and Spaces */}
                       {shouldShowTextBlock && (
-                        <div style={{ 
-                          fontSize: '0.875rem', 
-                          lineHeight: 1.5, 
-                          whiteSpace: 'pre-wrap', 
-                          wordBreak: 'break-word' 
-                        }}>
-                          {msgText}
-                        </div>
+                        msgText?.startsWith('[Flow') ? (
+                          <div style={{
+                            background: isOutbound ? 'rgba(255,255,255,0.2)' : '#F0FDF4',
+                            border: `1px solid ${isOutbound ? 'rgba(255,255,255,0.3)' : '#BBF7D0'}`,
+                            borderRadius: '8px',
+                            padding: '8px 10px',
+                            margin: '2px 0',
+                            fontSize: '0.82rem'
+                          }}>
+                            <div style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '6px',
+                              fontWeight: 700,
+                              color: isOutbound ? '#FFFFFF' : '#166534',
+                              marginBottom: '4px'
+                            }}>
+                              <Layers size={14} />
+                              <span>{msgText.split(']')[0].replace('[', '')}</span>
+                            </div>
+                            <div style={{
+                              color: isOutbound ? '#F1F5F9' : '#15803D',
+                              fontSize: '0.78rem',
+                              lineHeight: 1.4
+                            }}>
+                              {msgText.includes(']') ? msgText.split(']').slice(1).join(']').trim() : msgText}
+                            </div>
+                          </div>
+                        ) : (
+                          <div style={{ 
+                            fontSize: '0.875rem', 
+                            lineHeight: 1.5, 
+                            whiteSpace: 'pre-wrap', 
+                            wordBreak: 'break-word' 
+                          }}>
+                            {msgText}
+                          </div>
+                        )
                       )}
 
                       {/* Timestamp & Status: show if text message, or video, or image with caption */}
@@ -1610,6 +1713,29 @@ export default function InboxPage() {
                   title="Attach Image or Video (JPG, PNG, MP4, 3GP, MOV)"
                 >
                   <Paperclip size={18} />
+                </button>
+
+                {/* Send WhatsApp Flow Button */}
+                <button
+                  type="button"
+                  onClick={handleOpenFlowModal}
+                  style={{
+                    background: '#F0FDF4',
+                    border: '1px solid #BBF7D0',
+                    color: '#15803D',
+                    borderRadius: '8px',
+                    width: '42px',
+                    height: '42px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    cursor: 'pointer',
+                    flexShrink: 0,
+                    transition: 'all 0.15s ease'
+                  }}
+                  title="Send Interactive WhatsApp Flow Form"
+                >
+                  <Layers size={18} />
                 </button>
 
                 {/* Multi-line Auto-Expanding Textarea with Shift+Enter Support */}
@@ -2217,6 +2343,193 @@ export default function InboxPage() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* WhatsApp Flows Modal */}
+      {showFlowModal && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(15, 23, 42, 0.6)',
+          backdropFilter: 'blur(4px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1050,
+          padding: '16px'
+        }}>
+          <div style={{
+            background: '#ffffff',
+            borderRadius: '16px',
+            width: '100%',
+            maxWidth: '520px',
+            boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)',
+            border: '1px solid #E2E8F0',
+            overflow: 'hidden'
+          }}>
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              padding: '18px 24px',
+              borderBottom: '1px solid #F1F5F9'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <div style={{
+                  width: '36px',
+                  height: '36px',
+                  borderRadius: '10px',
+                  background: '#DCFCE7',
+                  color: '#15803D',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center'
+                }}>
+                  <Layers size={20} />
+                </div>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 700, color: '#0F172A' }}>
+                    Send WhatsApp Flow
+                  </h3>
+                  <p style={{ margin: 0, fontSize: '0.8rem', color: '#64748B' }}>
+                    Send an interactive native form to {selectedConvo?.name || selectedConvo?.phone}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowFlowModal(false)}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: '#94A3B8',
+                  cursor: 'pointer',
+                  padding: '4px'
+                }}
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <div style={{ padding: '24px' }}>
+              {availableFlows.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '24px 12px' }}>
+                  <Layers size={40} style={{ color: '#94A3B8', margin: '0 auto 12px' }} />
+                  <h4 style={{ margin: '0 0 6px', color: '#334155', fontWeight: 600 }}>No Meta Flows Available</h4>
+                  <p style={{ margin: 0, fontSize: '0.85rem', color: '#64748B' }}>
+                    You have not published or synchronized any WhatsApp Flows with Meta yet. Go to the WhatsApp Flows tab to create or sync your flows.
+                  </p>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, color: '#334155', marginBottom: '6px' }}>
+                      Select Flow Form
+                    </label>
+                    <select
+                      value={selectedFlowId}
+                      onChange={(e) => {
+                        setSelectedFlowId(e.target.value);
+                        const sel = availableFlows.find(f => f.id === e.target.value);
+                        if (sel) {
+                          setFlowBodyText(`Hi ${selectedConvo?.name || 'there'}! Please take a moment to complete our ${sel.name} form:`);
+                        }
+                      }}
+                      className="form-control"
+                      style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #CBD5E1', fontSize: '0.9rem' }}
+                    >
+                      {availableFlows.map(f => (
+                        <option key={f.id} value={f.id}>
+                          {f.name} ({f.category}) - {f.meta_status || 'Draft'}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, color: '#334155', marginBottom: '6px' }}>
+                      Accompanying Message
+                    </label>
+                    <textarea
+                      rows={3}
+                      value={flowBodyText}
+                      onChange={(e) => setFlowBodyText(e.target.value)}
+                      placeholder="Enter a message to introduce the interactive form..."
+                      className="form-control"
+                      style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #CBD5E1', fontSize: '0.875rem' }}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, color: '#334155', marginBottom: '6px' }}>
+                      Button CTA Label
+                    </label>
+                    <input
+                      type="text"
+                      maxLength={20}
+                      value={flowCtaText}
+                      onChange={(e) => setFlowCtaText(e.target.value)}
+                      placeholder="e.g. Open Form, Book Now"
+                      className="form-control"
+                      style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #CBD5E1', fontSize: '0.9rem' }}
+                    />
+                  </div>
+
+                  <div style={{
+                    background: '#F8FAFC',
+                    borderRadius: '8px',
+                    padding: '12px',
+                    border: '1px solid #E2E8F0',
+                    fontSize: '0.8rem',
+                    color: '#64748B'
+                  }}>
+                    💡 The customer will see an interactive WhatsApp message with an open-form button. When they submit, their responses will automatically appear right here in this chat!
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'flex-end',
+              gap: '12px',
+              padding: '16px 24px',
+              borderTop: '1px solid #F1F5F9',
+              background: '#F8FAFC'
+            }}>
+              <button
+                type="button"
+                onClick={() => setShowFlowModal(false)}
+                className="btn btn-secondary"
+                style={{ padding: '8px 16px', fontSize: '0.85rem' }}
+              >
+                Cancel
+              </button>
+              {availableFlows.length > 0 && (
+                <button
+                  type="button"
+                  onClick={handleSendFlowMessage}
+                  disabled={sendingFlow || !selectedFlowId}
+                  className="btn btn-action-green"
+                  style={{
+                    padding: '8px 20px',
+                    fontSize: '0.85rem',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px'
+                  }}
+                >
+                  <Send size={15} />
+                  <span>{sendingFlow ? 'Sending...' : 'Send Flow'}</span>
+                </button>
+              )}
+            </div>
           </div>
         </div>
       )}
